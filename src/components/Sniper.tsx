@@ -4,7 +4,6 @@ import { useConnectedStandardWallets, useStandardSignAndSendTransaction } from "
 import {
   DEFAULT_CONFIG,
   evaluateCoin,
-  generateSyntheticCoin,
   type SniperConfig,
   type SniperSource,
 } from "../lib/sniper";
@@ -27,8 +26,6 @@ interface Position {
   entryMc: number;
   currentMc: number;
   openedAt: number;
-  simulated: boolean;
-  live?: boolean; // opened with a real on-chain buy
   txSig?: string;
 }
 
@@ -126,12 +123,11 @@ export default function Sniper() {
   // ---- feed helpers ----
   const pushFeed = (item: FeedItem) => setFeed((f) => [item, ...f].slice(0, 40));
 
-  // ---- open / close positions ----
-  function openPosition(coin: Coin, config: SniperConfig, opts?: { live?: boolean; txSig?: string; detail?: string }) {
+  // ---- open a real position (after an on-chain buy) ----
+  function openPosition(coin: Coin, config: SniperConfig, opts: { txSig?: string; detail?: string }) {
     if (positionsRef.current.some((p) => p.id === coin.id)) return;
     if (positionsRef.current.length >= MAX_POSITIONS) return;
     const entryMc = Math.max(coin.marketCap || 0, 1);
-    const latency = 170 + Math.floor(Math.random() * 650);
     setPositions((prev) =>
       prev.some((p) => p.id === coin.id)
         ? prev
@@ -147,9 +143,7 @@ export default function Sniper() {
               entryMc,
               currentMc: entryMc,
               openedAt: Date.now(),
-              simulated: !opts?.live && coin.id.endsWith("-sim"),
-              live: opts?.live,
-              txSig: opts?.txSig,
+              txSig: opts.txSig,
             },
             ...prev,
           ]
@@ -163,10 +157,10 @@ export default function Sniper() {
       liquidity: coin.liquidity,
       dev: coin.devAddress,
       kind: "buy",
-      detail: opts?.detail ?? `${config.amountSol} SOL · ${latency}ms`,
+      detail: opts.detail ?? `${config.amountSol} SOL`,
       ok: true,
       ts: Date.now(),
-      txSig: opts?.txSig,
+      txSig: opts.txSig,
     });
   }
 
@@ -191,7 +185,7 @@ export default function Sniper() {
       }
       const sig = await submitTx(signRef.current, swallet, tx);
       balanceRef.current = Math.max(0, balanceRef.current - config.amountSol - FEE_BUFFER_SOL); // optimistic
-      openPosition(coin, config, { live: true, txSig: sig, detail: `BOUGHT ${config.amountSol} SOL` });
+      openPosition(coin, config, { txSig: sig, detail: `BOUGHT ${config.amountSol} SOL` });
     } catch (e: any) {
       pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: e?.message ? String(e.message).slice(0, 60) : "Buy failed/cancelled", ts: Date.now() });
     } finally {
@@ -203,24 +197,8 @@ export default function Sniper() {
     const idset = new Set(ids);
     const closing = positionsRef.current.filter((p) => idset.has(p.id));
     if (!closing.length) return;
-
-    // Live positions are sold on-chain; paper positions just settle locally.
-    const livePos = closing.filter((p) => p.live);
-    const paperPos = closing.filter((p) => !p.live);
-
-    if (paperPos.length) {
-      const realized = paperPos.reduce((s, p) => s + p.amountSol * (pnlPct(p) / 100), 0);
-      setRealizedSol((r) => r + realized);
-      const paperIds = new Set(paperPos.map((p) => p.id));
-      setPositions((prev) => prev.filter((p) => !paperIds.has(p.id)));
-      for (const p of paperPos) {
-        const pnl = pnlPct(p);
-        const tag = reason === "tp" ? "TP hit" : reason === "sl" ? "SL hit" : reason === "auto" ? "auto" : "closed";
-        pushFeed({ key: p.id + "c" + Date.now() + Math.random(), symbol: p.symbol, source: p.source, marketCap: p.currentMc, liquidity: 0, dev: p.dev, kind: "close", detail: `${tag} · ${formatPct(pnl)}`, ok: pnl >= 0, ts: Date.now() });
-      }
-    }
-
-    for (const p of livePos) void sellLivePosition(p, reason);
+    // All positions are real → sell on-chain.
+    for (const p of closing) void sellLivePosition(p, reason);
   }
 
   // Execute a REAL on-chain sell (100%) to close a live position.
@@ -251,12 +229,8 @@ export default function Sniper() {
     const decision = evaluateCoin(coin, config);
     setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
     if (decision.action === "buy") {
-      // Live mode with a connected wallet → real mainnet buy; else paper.
-      if (config.liveTrading && walletRef.current.addr && !coin.id.endsWith("-sim")) {
-        void executeLiveBuy(coin, config);
-      } else {
-        openPosition(coin, config);
-      }
+      // Mainnet only → always a real on-chain buy via the connected wallet.
+      void executeLiveBuy(coin, config);
     } else if (Math.random() > 0.6) {
       pushFeed({
         key: coin.id + Date.now(),
@@ -306,33 +280,10 @@ export default function Sniper() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- fallback synthetic scanning when armed & no live coins flowing ----
+  // ---- on arm, skip the backlog so we only snipe coins minted after arming ----
   useEffect(() => {
-    if (!armed) return;
-    // skip the backlog so we only snipe coins minted after arming
-    evaluatedRef.current = new Set(getRecentCoins().map((c) => c.id));
-    const id = setInterval(() => {
-      if (Date.now() - lastRealRef.current < 4000) return; // real data flowing
-      processCoin(generateSyntheticCoin(cfgRef.current));
-    }, 1700);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (armed) evaluatedRef.current = new Set(getRecentCoins().map((c) => c.id));
   }, [armed]);
-
-  // ---- drift simulated positions for a live PnL feel ----
-  useEffect(() => {
-    const id = setInterval(() => {
-      setPositions((prev) => {
-        if (!prev.some((p) => p.simulated)) return prev;
-        return prev.map((p) =>
-          p.simulated
-            ? { ...p, currentMc: Math.max(p.currentMc * (1 + (Math.random() - 0.45) * 0.1), p.entryMc * 0.15) }
-            : p
-        );
-      });
-    }, 2000);
-    return () => clearInterval(id);
-  }, []);
 
   // ---- auto take-profit / stop-loss ----
   useEffect(() => {
@@ -358,10 +309,10 @@ export default function Sniper() {
     pinMints(positions.map((p) => p.id));
   }, [positions]);
 
-  // ---- track live SOL balance while armed in live mode (no spend cap) ----
+  // ---- track live SOL balance while armed (no spend cap: run until funds out) ----
   useEffect(() => {
-    if (!armed || !cfg.liveTrading || !walletAddr) {
-      balanceRef.current = Infinity; // not gating in paper mode
+    if (!armed || !walletAddr) {
+      balanceRef.current = Infinity;
       return;
     }
     let stop = false;
@@ -375,7 +326,7 @@ export default function Sniper() {
       stop = true;
       clearInterval(id);
     };
-  }, [armed, cfg.liveTrading, walletAddr]);
+  }, [armed, walletAddr]);
 
   // ---- snipe a coin picked from New Launches ----
   function handleSnipeNew(coin: Coin) {
@@ -394,14 +345,13 @@ export default function Sniper() {
   }
 
   function toggleArm() {
-    if (!authenticated) return login();
+    if (!authenticated || !walletAddr) return login();
     if (cfg.mode === "dev-wallet" && cfg.devAddresses.length === 0) return;
-    if (cfg.liveTrading && !walletAddr) return login();
     setArmed((a) => !a);
   }
 
   const canArmDev = cfg.mode !== "dev-wallet" || cfg.devAddresses.length > 0;
-  const canArmLive = !cfg.liveTrading || !!walletAddr;
+  const hasWallet = !!walletAddr;
 
   // ---- aggregate PnL ----
   const deployed = positions.reduce((s, p) => s + p.amountSol, 0);
@@ -416,9 +366,10 @@ export default function Sniper() {
           Configure once. <span className="accent">Snipe automatically.</span>
         </h2>
         <p className="section-sub">
-          The LUFF AGENT sniper tracks new coins from pump.fun and Dexscreener in
-          realtime and executes the instant a token matches your rules — new launches
-          or straight from a developer's wallet — then tracks live PnL on every fill.
+          The LUFF AGENT sniper runs on <b>Solana mainnet</b> with real assets. It tracks new
+          coins from pump.fun and Dexscreener in realtime and buys the instant a token matches
+          your rules — new launches or straight from a developer's wallet — then tracks live PnL
+          and exits on your targets.
         </p>
 
         {/* NEW LAUNCHES (realtime, top of sniper) */}
@@ -531,46 +482,32 @@ export default function Sniper() {
 
             <Toggle label="Anti-rug shield" desc="Skip thin-liquidity / risky mints" on={cfg.antiRug} onChange={(v) => set("antiRug", v)} />
             <Toggle label="Auto take-profit / stop-loss" desc="Exit positions automatically" on={cfg.autoSell} onChange={(v) => set("autoSell", v)} />
-            <Toggle
-              label="🔴 Live trading (mainnet)"
-              desc={cfg.liveTrading ? (walletAddr ? `Auto-buys from ${shortAddr(walletAddr, 4)}` : "Connect a wallet first") : "Off = safe paper/simulation"}
-              on={cfg.liveTrading}
-              onChange={(v) => {
-                if (v && !authenticated) return login();
-                set("liveTrading", v);
-                if (v) setArmed(false);
-              }}
-            />
 
-            {cfg.liveTrading && (
-              <div className="warn-banner" style={{ marginTop: 4, marginBottom: 0 }}>
-                <span>⚠️</span>
-                <span>
-                  <b>LIVE mode spends real SOL on mainnet — no spend cap.</b> While armed it keeps buying
-                  matching tokens until your SOL runs out or you disarm. With the <b>embedded wallet</b> trades
-                  are <b>auto-approved</b> (hands-free); external wallets like Phantom still confirm each trade.
-                  New tokens are extremely high risk.
-                </span>
-              </div>
-            )}
+            <div className="warn-banner" style={{ marginTop: 6, marginBottom: 0 }}>
+              <span>🔴</span>
+              <span>
+                <b>Mainnet · real funds · no spend cap.</b> While armed the sniper buys matching tokens
+                with real SOL until your balance runs out or you disarm. The <b>embedded wallet</b>
+                auto-approves (hands-free); external wallets like Phantom confirm each trade. New tokens
+                are extremely high risk — only use funds you can afford to lose.
+              </span>
+            </div>
 
             <button
-              className={`btn btn-block arm-btn ${armed ? "armed" : ""} ${cfg.liveTrading ? "btn-danger" : "btn-primary"}`}
+              className={`btn btn-block arm-btn btn-danger ${armed ? "armed" : ""}`}
               onClick={toggleArm}
-              disabled={authenticated && (!canArmDev || !canArmLive)}
+              disabled={authenticated && hasWallet && !canArmDev}
               style={{ marginTop: 14 }}
             >
               {!authenticated
                 ? "🔒 Login to arm sniper"
+                : !hasWallet
+                ? "👛 Connect a wallet to arm"
                 : armed
                 ? "■ Disarm sniper"
                 : !canArmDev
                 ? "Add a dev wallet first"
-                : !canArmLive
-                ? "Connect a wallet for live mode"
-                : cfg.liveTrading
-                ? "🔴 Arm LIVE sniper"
-                : "▶ Arm sniper (paper)"}
+                : "🔴 Arm sniper (mainnet)"}
             </button>
           </div>
 
@@ -634,11 +571,9 @@ export default function Sniper() {
                             <span className={`coin-src ${p.source === "pump.fun" ? "src-pump" : "src-dex"}`}>
                               {p.source === "pump.fun" ? "pump" : "dex"}
                             </span>
-                            {p.live && (
-                              <span className="coin-src" style={{ background: "rgba(255,45,63,0.18)", color: "var(--red-bright)" }}>
-                                LIVE
-                              </span>
-                            )}
+                            <span className="coin-src" style={{ background: "rgba(255,45,63,0.18)", color: "var(--red-bright)" }}>
+                              LIVE
+                            </span>
                           </div>
                           <div className="fm-sub">
                             {p.amountSol} SOL · MC {formatCompact(p.entryMc)} → {formatCompact(p.currentMc)}
@@ -675,9 +610,9 @@ export default function Sniper() {
                   <div className="feed-status">
                     {armed ? (
                       <>
-                        <span className="live-dot" style={{ background: cfg.liveTrading ? "var(--red-bright)" : "#22e39a" }} />
-                        <span className="status-armed" style={cfg.liveTrading ? { color: "var(--red-bright)" } : undefined}>
-                          {cfg.liveTrading ? "LIVE" : "ARMED"} · scanning {cfg.mode === "dev-wallet" ? "dev wallets" : "new mints"}
+                        <span className="live-dot" style={{ background: "var(--red-bright)" }} />
+                        <span className="status-armed" style={{ color: "var(--red-bright)" }}>
+                          LIVE · scanning {cfg.mode === "dev-wallet" ? "dev wallets" : "new mints"}
                           {streamOpen ? " · realtime" : ""}
                         </span>
                       </>
@@ -692,26 +627,14 @@ export default function Sniper() {
                 </div>
               </div>
 
-              {cfg.liveTrading ? (
-                <div className="warn-banner" style={{ borderColor: "var(--border-strong)", background: "rgba(255,45,63,0.08)", color: "var(--red-soft)" }}>
-                  <span>🔴</span>
-                  <span>
-                    <b>LIVE mainnet · auto-approve · no spend cap.</b> Buying &amp; selling from your wallet
-                    {walletAddr ? ` (${shortAddr(walletAddr, 4)})` : ""} until SOL runs out or you disarm.
-                    Embedded wallet fires hands-free; Phantom confirms each trade. Trade only what you can
-                    afford to lose.
-                  </span>
-                </div>
-              ) : (
-                <div className="warn-banner">
-                  <span>🛡️</span>
-                  <span>
-                    Running in <b>secure paper (simulation) mode</b>. Flip on <b>Live trading</b> in the
-                    strategy panel to execute real mainnet buys with your connected wallet — non-custodial,
-                    keys never leave your wallet.
-                  </span>
-                </div>
-              )}
+              <div className="warn-banner" style={{ borderColor: "var(--border-strong)", background: "rgba(255,45,63,0.08)", color: "var(--red-soft)" }}>
+                <span>🔴</span>
+                <span>
+                  <b>Mainnet · real funds · non-custodial.</b> Trades execute from your connected wallet
+                  {walletAddr ? ` (${shortAddr(walletAddr, 4)})` : ""} until SOL runs out or you disarm.
+                  Embedded wallet fires hands-free; Phantom confirms each trade.
+                </span>
+              </div>
 
               {feed.length === 0 ? (
                 <div className="feed-empty">

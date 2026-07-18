@@ -28,7 +28,6 @@ export interface SniperConfig {
   stopLoss: number; // %
   antiRug: boolean;
   autoSell: boolean;
-  liveTrading: boolean; // execute REAL on-chain buys/sells on mainnet
   devAddresses: string[]; // for dev-wallet mode
 }
 
@@ -46,7 +45,6 @@ export const DEFAULT_CONFIG: SniperConfig = {
   stopLoss: 35,
   antiRug: true,
   autoSell: true,
-  liveTrading: false,
   devAddresses: [],
 };
 
@@ -182,30 +180,6 @@ export function generateCandidate(cfg: SniperConfig): Candidate {
     mintRevoked: Math.random() > 0.35,
     topHolderPct: Math.round(6 + Math.random() * 40),
     createdAt: Date.now(),
-  };
-}
-
-// Synthetic *Coin* for the fallback path (used only when no live coins are
-// flowing, e.g. the realtime host is unreachable) so the demo stays alive.
-export function generateSyntheticCoin(cfg: SniperConfig): Coin {
-  const c = generateCandidate(cfg);
-  return {
-    id: c.id + "-sim",
-    address: c.mint,
-    symbol: c.symbol,
-    name: c.name,
-    priceUsd: 0,
-    change24h: 0,
-    volume24h: 0,
-    liquidity: c.liquidity,
-    marketCap: c.marketCap,
-    source: c.source,
-    dexId: c.source === "pump.fun" ? "pumpfun" : "",
-    chainId: "solana",
-    createdAt: Date.now() - c.ageSec * 1000,
-    devAddress: c.dev,
-    isBondingCurve: c.source === "pump.fun",
-    bondingProgress: Math.min(100, (c.marketCap / 69000) * 100),
   };
 }
 
