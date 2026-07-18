@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
+import { useSolanaWallets } from "@privy-io/react-auth/solana";
 import { fetchWalletPortfolio, type WalletPortfolio } from "../lib/wallet";
 import { formatCompact, formatPrice, shortAddr } from "../lib/format";
 import WalletActions from "./WalletActions";
@@ -14,12 +15,15 @@ function amt(n: number): string {
 }
 
 export default function Portfolio() {
-  const { ready, authenticated, user, login } = usePrivy();
-  const wallet = user?.wallet?.address;
+  const { ready, authenticated, login } = usePrivy();
+  // The embedded Solana wallet lives here (not on user.wallet, which is EVM).
+  const { wallets: solWallets, createWallet } = useSolanaWallets();
+  const wallet = solWallets?.[0]?.address;
 
   const [data, setData] = useState<WalletPortfolio | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async (address: string) => {
     setLoading(true);
@@ -63,7 +67,7 @@ export default function Portfolio() {
               <span className="live-dot" style={{ background: "var(--amber)" }} /> Connecting to wallet…
             </div>
           </div>
-        ) : !authenticated || !wallet ? (
+        ) : !authenticated ? (
           <div className="card" style={{ padding: 40, textAlign: "center", marginTop: 28 }}>
             <div style={{ fontSize: "2.6rem", marginBottom: 12 }}>🔐</div>
             <h3 style={{ fontFamily: "var(--font-display)", margin: "0 0 8px" }}>
@@ -75,6 +79,33 @@ export default function Portfolio() {
             </p>
             <button className="btn btn-primary" onClick={login}>
               Connect wallet
+            </button>
+          </div>
+        ) : !wallet ? (
+          <div className="card" style={{ padding: 40, textAlign: "center", marginTop: 28 }}>
+            <div style={{ fontSize: "2.6rem", marginBottom: 12 }}>👛</div>
+            <h3 style={{ fontFamily: "var(--font-display)", margin: "0 0 8px" }}>
+              Setting up your wallet
+            </h3>
+            <p style={{ color: "var(--text-dim)", maxWidth: 440, margin: "0 auto 22px" }}>
+              Your LUFF AGENT embedded Solana wallet is being prepared. If it doesn't appear,
+              create it now — you'll always return to this same wallet.
+            </p>
+            <button
+              className="btn btn-primary"
+              disabled={creating}
+              onClick={async () => {
+                setCreating(true);
+                try {
+                  await createWallet();
+                } catch {
+                  /* already exists or cancelled */
+                } finally {
+                  setCreating(false);
+                }
+              }}
+            >
+              {creating ? "Creating…" : "Create wallet"}
             </button>
           </div>
         ) : (
