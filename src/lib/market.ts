@@ -29,9 +29,14 @@ export interface Coin {
   createdAt?: number;
   txns24h?: number;
   devAddress?: string;
+  bondingProgress?: number; // % toward graduation (pump.fun bonding curve)
+  isBondingCurve?: boolean; // still on the bonding curve (truly new)
 }
 
 const DS = "https://api.dexscreener.com";
+
+// pump.fun bonding curve graduates near this USD market cap.
+export const GRADUATION_MC_USD = 69000;
 
 // Curated set of liquid Solana majors / blue-chip memes for the "Top" board.
 const TOP_MINTS: string[] = [
@@ -132,6 +137,26 @@ export async function fetchMovers(): Promise<Coin[]> {
   return coins.slice(0, 12);
 }
 
+// Current SOL/USD price (cached), used to convert on-chain SOL amounts to USD.
+let solPriceCache = 170;
+let solPriceAt = 0;
+export function cachedSolPrice(): number {
+  return solPriceCache;
+}
+export async function fetchSolPrice(): Promise<number> {
+  if (Date.now() - solPriceAt < 30000) return solPriceCache;
+  const data = await getJson<{ pairs: any[] }>(
+    `${DS}/latest/dex/tokens/So11111111111111111111111111111111111111112`
+  );
+  const best = (data?.pairs || []).sort((a, b) => num(b.liquidity?.usd) - num(a.liquidity?.usd))[0];
+  const p = num(best?.priceUsd);
+  if (p > 0) {
+    solPriceCache = p;
+    solPriceAt = Date.now();
+  }
+  return solPriceCache;
+}
+
 // Batch-fetch pair data for many token addresses (Dexscreener caps at 30/req).
 async function fetchPairsForAddresses(addresses: string[]): Promise<any[]> {
   const uniq = [...new Set(addresses.filter(Boolean))];
@@ -157,6 +182,7 @@ export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
     for (const c of pump) {
       if (!c?.mint) continue;
       const mc = num(c.usd_market_cap) || num(c.market_cap);
+      const onCurve = c.complete === false || c.complete === undefined;
       byId.set(c.mint, {
         id: c.mint,
         address: c.mint,
@@ -174,6 +200,8 @@ export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
         url: `https://pump.fun/${c.mint}`,
         createdAt: num(c.created_timestamp),
         devAddress: c.creator,
+        isBondingCurve: onCurve,
+        bondingProgress: onCurve ? Math.min(100, (mc / GRADUATION_MC_USD) * 100) : 100,
       });
     }
   }
@@ -313,7 +341,7 @@ export const SAMPLE_MOVERS: Coin[] = [
 ];
 
 export const SAMPLE_NEW: Coin[] = [
-  mk({ symbol: "LUFFX", name: "Luff Runner", priceUsd: 0.00042, change24h: 61.0, volume24h: 240e3, liquidity: 34e3, marketCap: 42e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 40000, devAddress: "9xQeWv...pump" }),
-  mk({ symbol: "REDSHOT", name: "Red Shot", priceUsd: 0.00011, change24h: 12.5, volume24h: 88e3, liquidity: 21e3, marketCap: 18e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 120000, devAddress: "Dkp2Lm...pump" }),
-  mk({ symbol: "SNIPE", name: "Sniper Coin", priceUsd: 0.00087, change24h: 4.4, volume24h: 61e3, liquidity: 44e3, marketCap: 60e3, source: "dexscreener", createdAt: Date.now() - 300000 }),
+  mk({ symbol: "LUFFX", name: "Luff Runner", priceUsd: 0.00042, change24h: 61.0, volume24h: 240e3, liquidity: 34e3, marketCap: 42e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 40000, devAddress: "9xQeWvHtvv3Rk8mkn3yYv4mXfP1qpumpDkLa2c9zQeWv", isBondingCurve: true, bondingProgress: 61 }),
+  mk({ symbol: "REDSHOT", name: "Red Shot", priceUsd: 0.00011, change24h: 12.5, volume24h: 88e3, liquidity: 21e3, marketCap: 18e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 120000, devAddress: "Dkp2LmQ8n5rT9wXcv7bYh3jFpumpZ2aQeWv4mXfP1qpu", isBondingCurve: true, bondingProgress: 26 }),
+  mk({ symbol: "SNIPE", name: "Sniper Coin", priceUsd: 0.00087, change24h: 4.4, volume24h: 61e3, liquidity: 44e3, marketCap: 60e3, source: "dexscreener", createdAt: Date.now() - 300000, isBondingCurve: true, bondingProgress: 87 }),
 ];

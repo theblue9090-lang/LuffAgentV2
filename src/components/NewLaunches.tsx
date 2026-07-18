@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Coin } from "../lib/market";
-import { fetchNewLaunches } from "../lib/market";
+import { fetchNewLaunches, fetchSolPrice } from "../lib/market";
+import { subscribeNewTokens } from "../lib/pumpstream";
 import { formatCompact, timeAgo } from "../lib/format";
 
 type Src = "all" | "pump.fun" | "dexscreener";
@@ -12,56 +13,89 @@ interface Props {
 
 const REFRESH_MS = 15000;
 
-// Realtime feed of brand-new coins from pump.fun + Dexscreener,
-// shown at the top of the sniper. Newest first, deduped, live-aged.
+// Realtime feed of brand-new coins. Truly-new bonding-curve mints stream in
+// live over WebSocket (pump.fun), backed by REST polling from pump.fun +
+// Dexscreener. Newest first, deduped, live-aged.
 export default function NewLaunches({ onSnipe, onOpen }: Props) {
   const [coins, setCoins] = useState<Coin[]>([]);
   const [src, setSrc] = useState<Src>("all");
   const [loading, setLoading] = useState(true);
-  const [live, setLive] = useState(false);
+  const [restLive, setRestLive] = useState(false);
+  const [streamOpen, setStreamOpen] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(0);
   const [, forceAge] = useState(0);
   const seen = useRef<Set<string>>(new Set());
   const [fresh, setFresh] = useState<Set<string>>(new Set());
 
-  async function load() {
+  // Merge coins into the list, newest-first, deduped, capped.
+  function upsert(incoming: Coin[]) {
+    setCoins((prev) => {
+      const map = new Map<string, Coin>();
+      for (const c of incoming) map.set(c.id, c);
+      for (const c of prev) if (!map.has(c.id)) map.set(c.id, c);
+      return [...map.values()]
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, 80);
+    });
+  }
+
+  function markFresh(ids: string[]) {
+    if (!ids.length) return;
+    setFresh((f) => {
+      const n = new Set(f);
+      ids.forEach((id) => n.add(id));
+      return n;
+    });
+    setTimeout(() => {
+      setFresh((f) => {
+        const n = new Set(f);
+        ids.forEach((id) => n.delete(id));
+        return n;
+      });
+    }, 2800);
+  }
+
+  async function loadRest() {
     try {
       const data = await fetchNewLaunches(60);
-      setLive(true);
+      setRestLive(true);
       setUpdatedAt(Date.now());
-
-      const newlyFresh = new Set<string>();
-      for (const c of data) if (!seen.current.has(c.id)) newlyFresh.add(c.id);
-
-      setCoins((prev) => {
-        const map = new Map<string, Coin>();
-        for (const c of data) map.set(c.id, c);
-        // keep older ones we already had (so the list grows, not flickers)
-        for (const c of prev) if (!map.has(c.id)) map.set(c.id, c);
-        return [...map.values()]
-          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-          .slice(0, 80);
-      });
-
+      const newlyFresh = data.filter((c) => !seen.current.has(c.id)).map((c) => c.id);
+      upsert(data);
       for (const c of data) seen.current.add(c.id);
-      if (newlyFresh.size && seen.current.size > newlyFresh.size) {
-        setFresh(newlyFresh);
-        setTimeout(() => setFresh(new Set()), 2600);
-      }
+      // don't flash on the very first load (everything is "new" then)
+      if (seen.current.size > newlyFresh.length) markFresh(newlyFresh);
     } catch {
-      setLive(false);
+      setRestLive(false);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
-    const poll = setInterval(load, REFRESH_MS);
+    fetchSolPrice();
+    loadRest();
+    const poll = setInterval(loadRest, REFRESH_MS);
+    const price = setInterval(fetchSolPrice, 30000);
     const ager = setInterval(() => forceAge((x) => x + 1), 1000);
+
+    // Live WebSocket stream of brand-new bonding-curve mints.
+    const stream = subscribeNewTokens({
+      onStatus: setStreamOpen,
+      onToken: (coin) => {
+        if (seen.current.has(coin.id)) return;
+        seen.current.add(coin.id);
+        upsert([coin]);
+        markFresh([coin.id]);
+        setUpdatedAt(Date.now());
+      },
+    });
+
     return () => {
       clearInterval(poll);
+      clearInterval(price);
       clearInterval(ager);
+      stream.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -72,6 +106,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     "pump.fun": coins.filter((c) => c.source === "pump.fun").length,
     dexscreener: coins.filter((c) => c.source === "dexscreener").length,
   };
+  const live = streamOpen || restLive;
 
   return (
     <div className="card nl-panel">
@@ -80,6 +115,11 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
           <span className="live-dot" style={{ background: live ? "#22e39a" : "#ffb547" }} />
           🚀 New Launches — Realtime
           <span className="nl-count">{filtered.length} coins</span>
+          {streamOpen && (
+            <span className="nl-count" style={{ color: "#22e39a", borderColor: "rgba(34,227,154,0.4)" }}>
+              ● LIVE bonding-curve stream
+            </span>
+          )}
         </div>
         <div className="nl-controls">
           {(["all", "pump.fun", "dexscreener"] as Src[]).map((s) => (
@@ -107,7 +147,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
         </div>
       ) : filtered.length === 0 ? (
         <div className="nl-empty">
-          No new launches detected right now — the feed refreshes every {REFRESH_MS / 1000}s.
+          Listening for new launches — the feed updates live as coins are minted.
         </div>
       ) : (
         <div className="nl-grid">
@@ -125,7 +165,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
 
       <div className="data-note">
         <span>📡</span>
-        Streaming new mints &amp; pairs live from pump.fun and Dexscreener
+        Live bonding-curve stream + REST from pump.fun and Dexscreener
         {updatedAt ? ` · updated ${timeAgo(updatedAt)}` : ""}. Falls back to samples if a
         source is unreachable.
       </div>
@@ -144,6 +184,8 @@ function NLCard({
   onSnipe?: (c: Coin) => void;
   onOpen?: (c: Coin) => void;
 }) {
+  const prog = coin.bondingProgress;
+  const showProg = coin.isBondingCurve && typeof prog === "number";
   return (
     <div className={`nl-card ${fresh ? "fresh" : ""}`}>
       <div className="nl-card-head">
@@ -170,6 +212,15 @@ function NLCard({
         {coin.createdAt ? <span className="nl-age">{timeAgo(coin.createdAt)}</span> : null}
       </div>
 
+      {showProg && (
+        <div className="nl-bonding" title="Bonding curve progress toward graduation">
+          <div className="nl-bonding-bar">
+            <span style={{ width: `${Math.max(2, Math.min(100, prog!))}%` }} />
+          </div>
+          <span className="nl-bonding-pct">{prog! >= 100 ? "graduated" : `${prog!.toFixed(0)}%`}</span>
+        </div>
+      )}
+
       <div className="nl-meta">
         <span>
           MC <b>{formatCompact(coin.marketCap)}</b>
@@ -189,7 +240,14 @@ function NLCard({
           </button>
         )}
         {coin.url && (
-          <a className="nl-link" href={coin.url} target="_blank" rel="noreferrer" title="Open source" onClick={(e) => e.stopPropagation()}>
+          <a
+            className="nl-link"
+            href={coin.url}
+            target="_blank"
+            rel="noreferrer"
+            title="Open source"
+            onClick={(e) => e.stopPropagation()}
+          >
             ↗
           </a>
         )}
