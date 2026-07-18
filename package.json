@@ -1,0 +1,25 @@
+{
+  "name": "luff-agent",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "LUFF AGENT — an interactive crypto agent platform with a powerful realtime sniper for pump.fun and Dexscreener.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "@privy-io/react-auth": "^2.13.1",
+    "lightweight-charts": "^4.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

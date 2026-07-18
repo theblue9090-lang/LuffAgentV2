@@ -1,0 +1,32 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="luffGrad" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff4d5e" />
+      <stop offset="0.55" stop-color="#e11d2a" />
+      <stop offset="1" stop-color="#8f0f18" />
+    </linearGradient>
+    <radialGradient id="luffGlow" cx="0.5" cy="0.4" r="0.7">
+      <stop stop-color="#ff5a68" stop-opacity="0.55" />
+      <stop offset="1" stop-color="#ff2d3f" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <circle cx="60" cy="60" r="58" fill="#0a0406" />
+  <circle cx="60" cy="60" r="58" fill="url(#luffGlow)" />
+  <circle cx="60" cy="60" r="57" stroke="url(#luffGrad)" stroke-width="2.5" />
+  <!-- crosshair reticle -->
+  <circle cx="60" cy="60" r="30" stroke="url(#luffGrad)" stroke-width="3" opacity="0.9" />
+  <line x1="60" y1="12" x2="60" y2="34" stroke="url(#luffGrad)" stroke-width="3" stroke-linecap="round" />
+  <line x1="60" y1="86" x2="60" y2="108" stroke="url(#luffGrad)" stroke-width="3" stroke-linecap="round" />
+  <line x1="12" y1="60" x2="34" y2="60" stroke="url(#luffGrad)" stroke-width="3" stroke-linecap="round" />
+  <line x1="86" y1="60" x2="108" y2="60" stroke="url(#luffGrad)" stroke-width="3" stroke-linecap="round" />
+  <!-- stylized L -->
+  <path
+    d="M50 44 L50 74 L72 74"
+    stroke="url(#luffGrad)"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+  />
+  <circle cx="60" cy="60" r="4.5" fill="#ff4d5e" />
+</svg>
