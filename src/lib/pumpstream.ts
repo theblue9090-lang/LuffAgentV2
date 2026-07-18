@@ -7,7 +7,7 @@
 // ============================================================
 
 import type { Coin } from "./market";
-import { cachedSolPrice, GRADUATION_MC_USD } from "./market";
+import { cachedSolPrice, GRADUATION_MC_USD, normalizeUri } from "./market";
 
 const WS_URL = "wss://pumpportal.fun/api/data";
 
@@ -54,6 +54,53 @@ function eventToCoin(d: any): Coin | null {
   };
 }
 
+// ---- Metadata enrichment (logo + socials) --------------------
+// Freshly created tokens only carry a metadata `uri`; fetch it (light,
+// concurrency-capped) to pull the coin's image, X, Telegram & website.
+type EnrichJob = { uri: string; base: Coin; emit: (c: Coin) => void };
+const enrichQueue: EnrichJob[] = [];
+let enrichActive = 0;
+const ENRICH_MAX = 5;
+const ENRICH_BACKLOG = 60;
+
+function pumpEnrich() {
+  while (enrichActive < ENRICH_MAX && enrichQueue.length) {
+    const job = enrichQueue.shift()!;
+    enrichActive++;
+    enrichOne(job).finally(() => {
+      enrichActive--;
+      pumpEnrich();
+    });
+  }
+}
+
+async function enrichOne(job: EnrichJob) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 7000);
+    const res = await fetch(normalizeUri(job.uri)!, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return;
+    const m = await res.json();
+    job.emit({
+      ...job.base,
+      imageUrl: normalizeUri(m.image) || job.base.imageUrl,
+      description: m.description || job.base.description,
+      twitter: m.twitter || m.x || job.base.twitter,
+      telegram: m.telegram || job.base.telegram,
+      website: m.website || job.base.website,
+    });
+  } catch {
+    /* ignore — REST poll will enrich later */
+  }
+}
+
+function enqueueEnrich(job: EnrichJob) {
+  if (!job.uri || enrichQueue.length > ENRICH_BACKLOG) return;
+  enrichQueue.push(job);
+  pumpEnrich();
+}
+
 export function subscribeNewTokens(opts: Options): StreamHandle {
   let ws: WebSocket | null = null;
   let closed = false;
@@ -88,7 +135,10 @@ export function subscribeNewTokens(opts: Options): StreamHandle {
         if (d?.txType && d.txType !== "create") return;
         if (!d?.mint) return;
         const coin = eventToCoin(d);
-        if (coin) opts.onToken(coin);
+        if (!coin) return;
+        opts.onToken(coin); // show instantly
+        if (d.uri) enqueueEnrich({ uri: d.uri, base: coin, emit: opts.onToken }); // then add logo + socials
+
       } catch {
         /* ignore malformed frames */
       }

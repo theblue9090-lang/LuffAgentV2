@@ -31,6 +31,10 @@ export interface Coin {
   devAddress?: string;
   bondingProgress?: number; // % toward graduation (pump.fun bonding curve)
   isBondingCurve?: boolean; // still on the bonding curve (truly new)
+  description?: string;
+  twitter?: string;
+  telegram?: string;
+  website?: string;
 }
 
 const DS = "https://api.dexscreener.com";
@@ -72,10 +76,20 @@ function num(v: any): number {
   return typeof n === "number" && !isNaN(n) ? n : 0;
 }
 
+// Normalize ipfs:// URIs to an HTTPS gateway.
+export function normalizeUri(u?: string): string | undefined {
+  if (!u) return undefined;
+  if (u.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + u.slice(7);
+  return u;
+}
+
 // Choose the deepest-liquidity pair for a token and map it to a Coin.
 function pairToCoin(pair: any, source: CoinSource): Coin {
   const dexId: string = pair.dexId || "";
   const isPump = dexId.includes("pump") || source === "pump.fun";
+  const socials: any[] = pair.info?.socials || [];
+  const websites: any[] = pair.info?.websites || [];
+  const social = (t: string) => socials.find((s) => (s.type || s.label || "").toLowerCase() === t)?.url;
   return {
     id: pair.pairAddress || pair.baseToken?.address,
     address: pair.baseToken?.address || "",
@@ -91,13 +105,16 @@ function pairToCoin(pair: any, source: CoinSource): Coin {
     liquidity: num(pair.liquidity?.usd),
     marketCap: num(pair.marketCap) || num(pair.fdv),
     fdv: num(pair.fdv),
-    imageUrl: pair.info?.imageUrl,
+    imageUrl: normalizeUri(pair.info?.imageUrl),
     source: isPump ? "pump.fun" : "dexscreener",
     dexId,
     chainId: pair.chainId || "solana",
     url: pair.url,
     createdAt: pair.pairCreatedAt,
     txns24h: num(pair.txns?.h24?.buys) + num(pair.txns?.h24?.sells),
+    twitter: social("twitter"),
+    telegram: social("telegram"),
+    website: websites[0]?.url,
   };
 }
 
@@ -202,6 +219,10 @@ export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
         devAddress: c.creator,
         isBondingCurve: onCurve,
         bondingProgress: onCurve ? Math.min(100, (mc / GRADUATION_MC_USD) * 100) : 100,
+        description: c.description || undefined,
+        twitter: c.twitter || undefined,
+        telegram: c.telegram || undefined,
+        website: c.website || undefined,
       });
     }
   }
@@ -341,7 +362,7 @@ export const SAMPLE_MOVERS: Coin[] = [
 ];
 
 export const SAMPLE_NEW: Coin[] = [
-  mk({ symbol: "LUFFX", name: "Luff Runner", priceUsd: 0.00042, change24h: 61.0, volume24h: 240e3, liquidity: 34e3, marketCap: 42e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 40000, devAddress: "9xQeWvHtvv3Rk8mkn3yYv4mXfP1qpumpDkLa2c9zQeWv", isBondingCurve: true, bondingProgress: 61 }),
-  mk({ symbol: "REDSHOT", name: "Red Shot", priceUsd: 0.00011, change24h: 12.5, volume24h: 88e3, liquidity: 21e3, marketCap: 18e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 120000, devAddress: "Dkp2LmQ8n5rT9wXcv7bYh3jFpumpZ2aQeWv4mXfP1qpu", isBondingCurve: true, bondingProgress: 26 }),
-  mk({ symbol: "SNIPE", name: "Sniper Coin", priceUsd: 0.00087, change24h: 4.4, volume24h: 61e3, liquidity: 44e3, marketCap: 60e3, source: "dexscreener", createdAt: Date.now() - 300000, isBondingCurve: true, bondingProgress: 87 }),
+  mk({ symbol: "LUFFX", name: "Luff Runner", priceUsd: 0.00042, change24h: 61.0, volume24h: 240e3, liquidity: 34e3, marketCap: 42e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 40000, devAddress: "9xQeWvHtvv3Rk8mkn3yYv4mXfP1qpumpDkLa2c9zQeWv", isBondingCurve: true, bondingProgress: 61, description: "The fastest runner on the Solana bonding curve.", twitter: "https://x.com/luffagent", telegram: "https://t.me/luffagent", website: "https://pump.fun" }),
+  mk({ symbol: "REDSHOT", name: "Red Shot", priceUsd: 0.00011, change24h: 12.5, volume24h: 88e3, liquidity: 21e3, marketCap: 18e3, source: "pump.fun", dexId: "pumpfun", createdAt: Date.now() - 120000, devAddress: "Dkp2LmQ8n5rT9wXcv7bYh3jFpumpZ2aQeWv4mXfP1qpu", isBondingCurve: true, bondingProgress: 26, twitter: "https://x.com/luffagent", telegram: "https://t.me/luffagent" }),
+  mk({ symbol: "SNIPE", name: "Sniper Coin", priceUsd: 0.00087, change24h: 4.4, volume24h: 61e3, liquidity: 44e3, marketCap: 60e3, source: "dexscreener", createdAt: Date.now() - 300000, isBondingCurve: true, bondingProgress: 87, website: "https://dexscreener.com" }),
 ];

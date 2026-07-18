@@ -9,6 +9,7 @@ import {
 import type { Coin } from "../lib/market";
 import { buildSeries, nextLivePrice } from "../lib/market";
 import { formatPrice, formatCompact, formatPct } from "../lib/format";
+import Socials from "./Socials";
 
 interface Props {
   coin: Coin;
@@ -96,6 +97,9 @@ export default function CoinChart({ coin, onClose }: Props) {
                 </span>
               </div>
               <div style={{ color: "var(--text-mute)", fontSize: "0.82rem" }}>{coin.name}</div>
+              <div style={{ marginTop: 6 }}>
+                <Socials coin={coin} />
+              </div>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -117,6 +121,12 @@ export default function CoinChart({ coin, onClose }: Props) {
           <span className="live-dot" /> LIVE PRICE FEED
         </div>
         <div ref={wrapRef} className="chart-box" />
+
+        {coin.description && (
+          <p style={{ color: "var(--text-dim)", fontSize: "0.88rem", marginTop: 14, marginBottom: 0 }}>
+            {coin.description.length > 240 ? coin.description.slice(0, 240) + "…" : coin.description}
+          </p>
+        )}
 
         <div className="modal-stats">
           <Stat label="Market Cap" value={formatCompact(coin.marketCap)} />

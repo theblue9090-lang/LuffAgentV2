@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Coin } from "../lib/market";
 import { fetchNewLaunches, fetchSolPrice } from "../lib/market";
 import { subscribeNewTokens } from "../lib/pumpstream";
-import { formatCompact, timeAgo } from "../lib/format";
+import { formatCompact, timeAgo, shortAddr } from "../lib/format";
+import Socials from "./Socials";
 
 type Src = "all" | "pump.fun" | "dexscreener";
 
@@ -11,7 +12,7 @@ interface Props {
   onOpen?: (coin: Coin) => void;
 }
 
-const REFRESH_MS = 15000;
+const REFRESH_MS = 6000;
 
 // Realtime feed of brand-new coins. Truly-new bonding-curve mints stream in
 // live over WebSocket (pump.fun), backed by REST polling from pump.fun +
@@ -229,6 +230,17 @@ function NLCard({
           Liq <b>{formatCompact(coin.liquidity)}</b>
         </span>
       </div>
+
+      {(coin.twitter || coin.telegram || coin.website || coin.devAddress) && (
+        <div className="nl-social-row">
+          <Socials coin={coin} />
+          {coin.devAddress && (
+            <span className="nl-dev" title={`Dev: ${coin.devAddress}`}>
+              dev {shortAddr(coin.devAddress, 4)}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="nl-actions">
         <button className="nl-snipe" onClick={() => onSnipe?.(coin)}>

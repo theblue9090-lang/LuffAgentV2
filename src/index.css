@@ -950,6 +950,56 @@ a {
   margin-bottom: 10px;
 }
 .nl-meta b { color: var(--text); font-weight: 600; }
+.nl-social-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.nl-dev {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 7px;
+  margin-left: auto;
+}
+.socials-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.social-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: rgba(255, 77, 94, 0.06);
+  color: var(--text-dim);
+  transition: all 0.14s;
+}
+.social-chip:hover {
+  color: var(--red-soft);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.social-chip svg {
+  width: 13px;
+  height: 13px;
+}
+.socials-md .social-chip {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+.socials-md .social-chip svg {
+  width: 16px;
+  height: 16px;
+}
 .nl-actions {
   display: flex;
   gap: 7px;
