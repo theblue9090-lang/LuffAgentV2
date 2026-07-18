@@ -219,6 +219,47 @@ async function fetchPairsForAddresses(addresses: string[]): Promise<any[]> {
   return results.flatMap((r) => r?.pairs || []);
 }
 
+// Map a pump.fun REST coin object to a Coin (includes socials + progress).
+function pumpRestToCoin(c: any): Coin {
+  const mc = num(c.usd_market_cap) || num(c.market_cap);
+  const onCurve = c.complete === false || c.complete === undefined;
+  return {
+    id: c.mint,
+    address: c.mint,
+    symbol: (c.symbol || "?").toUpperCase(),
+    name: c.name || c.symbol || "New Launch",
+    priceUsd: mc && c.total_supply ? mc / (num(c.total_supply) / 1e6) : 0,
+    change24h: 0,
+    volume24h: 0,
+    liquidity: num(c.virtual_sol_reserves) / 1e9 || 0,
+    marketCap: mc,
+    imageUrl: normalizeUri(c.image_uri),
+    source: "pump.fun",
+    dexId: "pumpfun",
+    chainId: "solana",
+    url: `https://pump.fun/${c.mint}`,
+    createdAt: num(c.created_timestamp),
+    devAddress: c.creator,
+    isBondingCurve: onCurve,
+    bondingProgress: onCurve ? Math.min(100, (mc / GRADUATION_MC_USD) * 100) : 100,
+    description: c.description || undefined,
+    twitter: c.twitter || undefined,
+    telegram: c.telegram || undefined,
+    website: c.website || undefined,
+  };
+}
+
+// ---- FAST new-launch feed (pump.fun only, single lightweight request) ----
+// Used on a short interval so brand-new coins appear near-instantly even if
+// the WebSocket is blocked. No Dexscreener round-trips = minimal latency.
+export async function fetchPumpLatest(limit = 30): Promise<Coin[]> {
+  const pump = await getJson<any[]>(
+    `https://frontend-api-v3.pump.fun/coins?offset=0&limit=${limit}&sort=created_timestamp&order=DESC&includeNsfw=false`
+  );
+  if (!Array.isArray(pump)) return [];
+  return pump.filter((c) => c?.mint).map(pumpRestToCoin);
+}
+
 // ---- NEW LAUNCHES (pump.fun + dexscreener latest) --------------
 // Pulls the freshest coins from BOTH sources in realtime, deduped and
 // sorted newest-first. `limit` controls how many rows we surface.
@@ -232,32 +273,7 @@ export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
   if (Array.isArray(pump)) {
     for (const c of pump) {
       if (!c?.mint) continue;
-      const mc = num(c.usd_market_cap) || num(c.market_cap);
-      const onCurve = c.complete === false || c.complete === undefined;
-      byId.set(c.mint, {
-        id: c.mint,
-        address: c.mint,
-        symbol: (c.symbol || "?").toUpperCase(),
-        name: c.name || c.symbol || "New Launch",
-        priceUsd: mc && c.total_supply ? mc / (num(c.total_supply) / 1e6) : 0,
-        change24h: 0,
-        volume24h: 0,
-        liquidity: num(c.virtual_sol_reserves) / 1e9 || 0,
-        marketCap: mc,
-        imageUrl: c.image_uri,
-        source: "pump.fun",
-        dexId: "pumpfun",
-        chainId: "solana",
-        url: `https://pump.fun/${c.mint}`,
-        createdAt: num(c.created_timestamp),
-        devAddress: c.creator,
-        isBondingCurve: onCurve,
-        bondingProgress: onCurve ? Math.min(100, (mc / GRADUATION_MC_USD) * 100) : 100,
-        description: c.description || undefined,
-        twitter: c.twitter || undefined,
-        telegram: c.telegram || undefined,
-        website: c.website || undefined,
-      });
+      byId.set(c.mint, pumpRestToCoin(c));
     }
   }
 

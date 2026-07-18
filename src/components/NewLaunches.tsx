@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Coin } from "../lib/market";
-import { fetchNewLaunches, fetchSolPrice } from "../lib/market";
+import { fetchNewLaunches, fetchPumpLatest, fetchSolPrice } from "../lib/market";
 import { subscribeNewTokens, type StreamHandle, type TradeUpdate } from "../lib/pumpstream";
 import { formatCompact, timeAgo, shortAddr } from "../lib/format";
 import Socials from "./Socials";
@@ -12,8 +12,9 @@ interface Props {
   onOpen?: (coin: Coin) => void;
 }
 
-const REFRESH_MS = 6000;
-const MAX_WATCH = 45;
+const FAST_MS = 3000; // lightweight pump.fun-only refresh for instant new coins
+const FULL_MS = 10000; // richer pump.fun + Dexscreener refresh
+const MAX_WATCH = 14; // cap live trade subscriptions so new mints stay snappy
 
 // Realtime feed of brand-new coins. Truly-new bonding-curve mints stream in
 // live over WebSocket (pump.fun), backed by REST polling from pump.fun +
@@ -61,16 +62,35 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     }, 2800);
   }
 
+  // Merge freshly fetched coins, flashing genuinely-new ones (not first load).
+  function ingest(data: Coin[]) {
+    if (!data.length) return;
+    const newlyFresh = data.filter((c) => !seen.current.has(c.id)).map((c) => c.id);
+    upsert(data);
+    for (const c of data) seen.current.add(c.id);
+    setUpdatedAt(Date.now());
+    if (seen.current.size > newlyFresh.length) markFresh(newlyFresh);
+  }
+
+  // FAST: pump.fun-only, single request — brand-new coins appear near-instantly.
+  async function loadFast() {
+    try {
+      const data = await fetchPumpLatest(30);
+      if (data.length) setRestLive(true);
+      ingest(data);
+    } catch {
+      /* ignore — full poll / stream will cover it */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // FULL: pump.fun + Dexscreener for completeness (socials, dex launches).
   async function loadRest() {
     try {
       const data = await fetchNewLaunches(60);
       setRestLive(true);
-      setUpdatedAt(Date.now());
-      const newlyFresh = data.filter((c) => !seen.current.has(c.id)).map((c) => c.id);
-      upsert(data);
-      for (const c of data) seen.current.add(c.id);
-      // don't flash on the very first load (everything is "new" then)
-      if (seen.current.size > newlyFresh.length) markFresh(newlyFresh);
+      ingest(data);
     } catch {
       setRestLive(false);
     } finally {
@@ -96,8 +116,10 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
 
   useEffect(() => {
     fetchSolPrice();
+    loadFast();
     loadRest();
-    const poll = setInterval(loadRest, REFRESH_MS);
+    const fast = setInterval(loadFast, FAST_MS);
+    const poll = setInterval(loadRest, FULL_MS);
     const price = setInterval(fetchSolPrice, 30000);
     const ager = setInterval(() => forceAge((x) => x + 1), 1000);
 
@@ -142,6 +164,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     }, 650);
 
     return () => {
+      clearInterval(fast);
       clearInterval(poll);
       clearInterval(price);
       clearInterval(ager);
