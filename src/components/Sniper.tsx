@@ -10,7 +10,10 @@ import {
   type SniperConfig,
   type ExecutionResult,
 } from "../lib/sniper";
+import type { Coin } from "../lib/market";
 import { formatCompact, shortAddr } from "../lib/format";
+import NewLaunches from "./NewLaunches";
+import CoinChart from "./CoinChart";
 
 interface FeedItem {
   key: string;
@@ -29,9 +32,28 @@ export default function Sniper() {
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [stats, setStats] = useState({ scanned: 0, sniped: 0, filled: 0 });
   const [devInput, setDevInput] = useState("");
+  const [chartCoin, setChartCoin] = useState<Coin | null>(null);
+  const [target, setTarget] = useState<string>("");
 
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
+
+  // Snipe a coin picked from the New Launches feed: pre-fill the strategy
+  // and scroll the user to the config so they can arm it immediately.
+  function handleSnipeNew(coin: Coin) {
+    setTarget(coin.symbol);
+    if (coin.devAddress) {
+      setCfg((p) => ({ ...p, mode: "dev-wallet" }));
+      setDevInput((prev) =>
+        prev.includes(coin.devAddress!) ? prev : (prev ? prev.trim() + "\n" : "") + coin.devAddress
+      );
+    } else {
+      setCfg((p) => ({ ...p, mode: "new-launches" }));
+    }
+    setTimeout(() => {
+      document.querySelector(".sniper-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  }
 
   const set = <K extends keyof SniperConfig>(k: K, v: SniperConfig[K]) =>
     setCfg((p) => ({ ...p, [k]: v }));
@@ -98,11 +120,25 @@ export default function Sniper() {
           sniping straight from a developer's wallet.
         </p>
 
-        <div className="sniper-layout" style={{ marginTop: 26 }}>
+        {/* ---------------- NEW LAUNCHES (realtime, top of sniper) ---------------- */}
+        <div style={{ marginTop: 26 }}>
+          <NewLaunches onSnipe={handleSnipeNew} onOpen={setChartCoin} />
+        </div>
+
+        <div className="sniper-layout">
           {/* ---------------- CONFIG PANEL ---------------- */}
           <div className="card sniper-panel">
             <div className="panel-title">🎯 Strategy</div>
-            <div className="panel-sub">Rules run on every new mint, 24/7.</div>
+            <div className="panel-sub">
+              {target ? (
+                <>
+                  Target locked: <b style={{ color: "var(--red-soft)" }}>${target}</b> — review
+                  rules and arm.
+                </>
+              ) : (
+                "Rules run on every new mint, 24/7."
+              )}
+            </div>
 
             {/* Mode */}
             <div className="field">
@@ -343,6 +379,8 @@ export default function Sniper() {
           </div>
         </div>
       </div>
+
+      {chartCoin && <CoinChart coin={chartCoin} onClose={() => setChartCoin(null)} />}
     </section>
   );
 }

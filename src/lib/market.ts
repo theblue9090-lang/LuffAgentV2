@@ -132,18 +132,32 @@ export async function fetchMovers(): Promise<Coin[]> {
   return coins.slice(0, 12);
 }
 
+// Batch-fetch pair data for many token addresses (Dexscreener caps at 30/req).
+async function fetchPairsForAddresses(addresses: string[]): Promise<any[]> {
+  const uniq = [...new Set(addresses.filter(Boolean))];
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += 30) chunks.push(uniq.slice(i, i + 30));
+  const results = await Promise.all(
+    chunks.map((chunk) => getJson<{ pairs: any[] }>(`${DS}/latest/dex/tokens/${chunk.join(",")}`))
+  );
+  return results.flatMap((r) => r?.pairs || []);
+}
+
 // ---- NEW LAUNCHES (pump.fun + dexscreener latest) --------------
-export async function fetchNewLaunches(): Promise<Coin[]> {
-  const out: Coin[] = [];
+// Pulls the freshest coins from BOTH sources in realtime, deduped and
+// sorted newest-first. `limit` controls how many rows we surface.
+export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
+  const byId = new Map<string, Coin>();
 
   // 1) pump.fun freshest coins (may be CORS-blocked on some hosts).
   const pump = await getJson<any[]>(
-    "https://frontend-api-v3.pump.fun/coins?offset=0&limit=16&sort=created_timestamp&order=DESC&includeNsfw=false"
+    "https://frontend-api-v3.pump.fun/coins?offset=0&limit=60&sort=created_timestamp&order=DESC&includeNsfw=false"
   );
   if (Array.isArray(pump)) {
     for (const c of pump) {
+      if (!c?.mint) continue;
       const mc = num(c.usd_market_cap) || num(c.market_cap);
-      out.push({
+      byId.set(c.mint, {
         id: c.mint,
         address: c.mint,
         symbol: (c.symbol || "?").toUpperCase(),
@@ -164,23 +178,28 @@ export async function fetchNewLaunches(): Promise<Coin[]> {
     }
   }
 
-  // 2) Dexscreener newest token profiles (Solana).
-  const profiles = await getJson<any[]>(`${DS}/token-profiles/latest/v1`);
-  const solProfiles = (profiles || []).filter((p) => p.chainId === "solana").slice(0, 16);
-  if (solProfiles.length) {
-    const addrs = solProfiles.map((p) => p.tokenAddress).slice(0, 20);
-    const data = await getJson<{ pairs: any[] }>(`${DS}/latest/dex/tokens/${addrs.join(",")}`);
-    if (data?.pairs?.length) {
-      for (const p of bestPairPerToken(data.pairs)) {
-        out.push(pairToCoin(p, p.dexId?.includes("pump") ? "pump.fun" : "dexscreener"));
-      }
+  // 2) Dexscreener newest token profiles (all Solana) + latest boosts.
+  const [profiles, boosts] = await Promise.all([
+    getJson<any[]>(`${DS}/token-profiles/latest/v1`),
+    getJson<any[]>(`${DS}/token-boosts/latest/v1`),
+  ]);
+  const solAddrs = [
+    ...(profiles || []).filter((p) => p.chainId === "solana").map((p) => p.tokenAddress),
+    ...(boosts || []).filter((b) => b.chainId === "solana").map((b) => b.tokenAddress),
+  ];
+  if (solAddrs.length) {
+    const pairs = await fetchPairsForAddresses(solAddrs);
+    for (const p of bestPairPerToken(pairs)) {
+      const coin = pairToCoin(p, p.dexId?.includes("pump") ? "pump.fun" : "dexscreener");
+      // don't overwrite a richer pump.fun record with a dex duplicate
+      if (!byId.has(coin.address)) byId.set(coin.address, coin);
     }
   }
 
+  const out = [...byId.values()];
   if (!out.length) return SAMPLE_NEW;
-  // newest first
   out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  return out.slice(0, 14);
+  return out.slice(0, limit);
 }
 
 // ============================================================

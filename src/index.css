@@ -787,6 +787,182 @@ a {
 }
 
 /* ============================================================
+   NEW LAUNCHES (realtime panel atop the sniper)
+   ============================================================ */
+.nl-panel {
+  padding: 20px 22px;
+  margin-bottom: 20px;
+}
+.nl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.nl-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nl-count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.nl-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nl-filter {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 77, 94, 0.05);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.14s;
+}
+.nl-filter:hover { border-color: var(--border-strong); color: var(--text); }
+.nl-filter.active {
+  background: linear-gradient(120deg, var(--red), var(--red-deep));
+  color: #fff;
+  border-color: transparent;
+}
+.nl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+  max-height: 560px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.nl-card {
+  padding: 13px 14px;
+  border-radius: 13px;
+  border: 1px solid var(--border);
+  background: rgba(255, 77, 94, 0.04);
+  transition: border-color 0.15s, transform 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+.nl-card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+.nl-card.fresh {
+  animation: freshPop 2.4s ease;
+  border-color: rgba(34, 227, 154, 0.45);
+}
+@keyframes freshPop {
+  0% { background: rgba(34, 227, 154, 0.16); }
+  100% { background: rgba(255, 77, 94, 0.04); }
+}
+.nl-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+.nl-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  object-fit: cover;
+  background: rgba(255, 77, 94, 0.1);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--red-soft);
+  font-size: 0.72rem;
+}
+.nl-sym {
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nl-name {
+  font-size: 0.72rem;
+  color: var(--text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nl-age {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--green);
+  background: var(--green-dim);
+  border-radius: 6px;
+  padding: 3px 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.nl-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.nl-meta b { color: var(--text); font-weight: 600; }
+.nl-actions {
+  display: flex;
+  gap: 7px;
+}
+.nl-snipe {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: none;
+  background: linear-gradient(120deg, var(--red-bright), var(--red));
+  color: #fff;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.15s;
+}
+.nl-snipe:hover { box-shadow: 0 6px 16px -6px var(--red-glow); transform: translateY(-1px); }
+.nl-link {
+  padding: 7px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: rgba(255, 77, 94, 0.06);
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+}
+.nl-link:hover { border-color: var(--border-strong); color: var(--text); }
+.nl-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+}
+
+/* ============================================================
    SNIPER
    ============================================================ */
 .sniper-layout {
