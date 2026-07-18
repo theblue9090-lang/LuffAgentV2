@@ -1,3 +1,7 @@
+import { Buffer } from "buffer";
+// Polyfill Buffer for @solana/web3.js in the browser (needed before any web3 usage).
+if (!(globalThis as any).Buffer) (globalThis as any).Buffer = Buffer;
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { PrivyProvider } from "@privy-io/react-auth";
@@ -20,8 +24,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           showWalletLoginFirst: false,
         },
         loginMethods: ["wallet", "email", "google", "twitter"],
+        // Give every account exactly ONE embedded Solana wallet. Privy embedded
+        // wallets are deterministic per account (HD index 0) and persist across
+        // logout / login, so a user always returns to the same wallet.
         embeddedWallets: {
           createOnLogin: "users-without-wallets",
+          showWalletUIs: true,
         },
       }}
     >

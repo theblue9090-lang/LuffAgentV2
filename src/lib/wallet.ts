@@ -21,6 +21,7 @@ export interface Asset {
   name: string;
   imageUrl?: string;
   amount: number;
+  decimals: number;
   priceUsd: number;
   valueUsd: number;
 }
@@ -57,7 +58,10 @@ async function rpcCall<T = any>(method: string, params: any[]): Promise<T | null
   return null;
 }
 
-async function getTokenAccounts(address: string, programId: string): Promise<{ mint: string; amount: number }[]> {
+async function getTokenAccounts(
+  address: string,
+  programId: string
+): Promise<{ mint: string; amount: number; decimals: number }[]> {
   const res = await rpcCall<any>("getTokenAccountsByOwner", [
     address,
     { programId },
@@ -67,7 +71,11 @@ async function getTokenAccounts(address: string, programId: string): Promise<{ m
   return list
     .map((a: any) => {
       const info = a?.account?.data?.parsed?.info;
-      return { mint: info?.mint as string, amount: Number(info?.tokenAmount?.uiAmount) || 0 };
+      return {
+        mint: info?.mint as string,
+        amount: Number(info?.tokenAmount?.uiAmount) || 0,
+        decimals: Number(info?.tokenAmount?.decimals) || 0,
+      };
     })
     .filter((t: any) => t.mint && t.amount > 0);
 }
@@ -94,6 +102,7 @@ export async function fetchWalletPortfolio(address: string): Promise<WalletPortf
       symbol: "SOL",
       name: "Solana",
       amount: solBalance,
+      decimals: 9,
       priceUsd: solPrice,
       valueUsd: solBalance * solPrice,
     });
@@ -107,6 +116,7 @@ export async function fetchWalletPortfolio(address: string): Promise<WalletPortf
       name: m?.name || "Unknown token",
       imageUrl: m?.imageUrl,
       amount: t.amount,
+      decimals: t.decimals,
       priceUsd: price,
       valueUsd: t.amount * price,
     });

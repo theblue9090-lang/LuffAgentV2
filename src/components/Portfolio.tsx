@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { fetchWalletPortfolio, type WalletPortfolio } from "../lib/wallet";
 import { formatCompact, formatPrice, shortAddr } from "../lib/format";
+import WalletActions from "./WalletActions";
 
 // Format a token balance compactly.
 function amt(n: number): string {
@@ -102,6 +103,12 @@ export default function Portfolio() {
                 value={data ? String(data.holdings.length) : loading ? "…" : "—"}
               />
             </div>
+
+            <WalletActions
+              wallet={wallet}
+              holdings={data?.holdings || []}
+              onDone={() => load(wallet)}
+            />
 
             <div className="card" style={{ marginTop: 18, padding: 6, overflowX: "auto" }}>
               {error && (!data || data.holdings.length === 0) ? (
