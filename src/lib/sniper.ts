@@ -28,6 +28,7 @@ export interface SniperConfig {
   stopLoss: number; // %
   antiRug: boolean;
   autoSell: boolean;
+  liveTrading: boolean; // execute REAL on-chain buys/sells on mainnet
   devAddresses: string[]; // for dev-wallet mode
 }
 
@@ -45,6 +46,7 @@ export const DEFAULT_CONFIG: SniperConfig = {
   stopLoss: 35,
   antiRug: true,
   autoSell: true,
+  liveTrading: false,
   devAddresses: [],
 };
 

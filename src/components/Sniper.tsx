@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
+import { useConnectedStandardWallets, useStandardSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import {
   DEFAULT_CONFIG,
   evaluateCoin,
@@ -9,6 +10,7 @@ import {
 } from "../lib/sniper";
 import type { Coin } from "../lib/market";
 import { joinHub, getRecentCoins, pinMints, type TradeUpdate } from "../lib/pumphub";
+import { pumpPortalTradeTx, submitTx, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx } from "../lib/txn";
 import { formatCompact, formatPct, shortAddr } from "../lib/format";
 import NewLaunches from "./NewLaunches";
 import CoinChart from "./CoinChart";
@@ -25,6 +27,42 @@ interface Position {
   currentMc: number;
   openedAt: number;
   simulated: boolean;
+  live?: boolean; // opened with a real on-chain buy
+  txSig?: string;
+}
+
+// Build a real BUY transaction for a coin. Pump-origin tokens route through
+// PumpPortal (bonding curve + migrated pools); others fall back to Jupiter.
+async function buildBuyTx(coin: Coin, wallet: string, cfg: SniperConfig) {
+  if (coin.source === "pump.fun" || coin.isBondingCurve) {
+    return pumpPortalTradeTx({
+      wallet,
+      mint: coin.address,
+      action: "buy",
+      amount: cfg.amountSol,
+      denominatedInSol: true,
+      slippage: cfg.slippage,
+      priorityFee: cfg.priorityFee,
+      pool: "auto",
+    });
+  }
+  const raw = BigInt(Math.round(cfg.amountSol * 1e9)).toString();
+  const q = await jupiterQuote(SOL_MINT, coin.address, raw, Math.round(cfg.slippage * 100));
+  return q ? jupiterSwapTx(q, wallet) : null;
+}
+
+// Build a real SELL (100%) transaction to close a position on-chain.
+async function buildSellTx(pos: Position, wallet: string, cfg: SniperConfig) {
+  return pumpPortalTradeTx({
+    wallet,
+    mint: pos.id,
+    action: "sell",
+    amount: "100%",
+    denominatedInSol: false,
+    slippage: cfg.slippage,
+    priorityFee: cfg.priorityFee,
+    pool: "auto",
+  });
 }
 
 interface FeedItem {
@@ -38,6 +76,7 @@ interface FeedItem {
   detail: string;
   ok?: boolean;
   ts: number;
+  txSig?: string;
 }
 
 const AMOUNT_PRESETS = [0.1, 0.5, 1, 2, 5];
@@ -47,6 +86,11 @@ const pnlPct = (p: Position) => (p.entryMc > 0 ? (p.currentMc / p.entryMc - 1) *
 
 export default function Sniper() {
   const { authenticated, login } = usePrivy();
+  const { wallets: stdWallets } = useConnectedStandardWallets();
+  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
+  const swallet = stdWallets?.[0] as any;
+  const walletAddr: string | undefined = swallet?.address;
+
   const [cfg, setCfg] = useState<SniperConfig>(DEFAULT_CONFIG);
   const [armed, setArmed] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -66,6 +110,12 @@ export default function Sniper() {
   positionsRef.current = positions;
   const evaluatedRef = useRef<Set<string>>(new Set());
   const lastRealRef = useRef(0);
+  const executingRef = useRef(false); // one live buy at a time (avoid popup storms)
+  // keep latest wallet + signer available to the (once-registered) hub listener
+  const walletRef = useRef<{ addr?: string; swallet: any }>({ addr: walletAddr, swallet });
+  walletRef.current = { addr: walletAddr, swallet };
+  const signRef = useRef(signAndSendTransaction);
+  signRef.current = signAndSendTransaction;
 
   const set = <K extends keyof SniperConfig>(k: K, v: SniperConfig[K]) =>
     setCfg((p) => ({ ...p, [k]: v }));
@@ -74,7 +124,7 @@ export default function Sniper() {
   const pushFeed = (item: FeedItem) => setFeed((f) => [item, ...f].slice(0, 40));
 
   // ---- open / close positions ----
-  function openPosition(coin: Coin, config: SniperConfig) {
+  function openPosition(coin: Coin, config: SniperConfig, opts?: { live?: boolean; txSig?: string; detail?: string }) {
     if (positionsRef.current.some((p) => p.id === coin.id)) return;
     if (positionsRef.current.length >= MAX_POSITIONS) return;
     const entryMc = Math.max(coin.marketCap || 0, 1);
@@ -94,7 +144,9 @@ export default function Sniper() {
               entryMc,
               currentMc: entryMc,
               openedAt: Date.now(),
-              simulated: coin.id.endsWith("-sim"),
+              simulated: !opts?.live && coin.id.endsWith("-sim"),
+              live: opts?.live,
+              txSig: opts?.txSig,
             },
             ...prev,
           ]
@@ -108,34 +160,76 @@ export default function Sniper() {
       liquidity: coin.liquidity,
       dev: coin.devAddress,
       kind: "buy",
-      detail: `${config.amountSol} SOL · ${latency}ms`,
+      detail: opts?.detail ?? `${config.amountSol} SOL · ${latency}ms`,
       ok: true,
       ts: Date.now(),
+      txSig: opts?.txSig,
     });
+  }
+
+  // Execute a REAL on-chain buy via the connected wallet (mainnet).
+  async function executeLiveBuy(coin: Coin, config: SniperConfig) {
+    const { addr, swallet } = walletRef.current;
+    if (!addr || !swallet) return;
+    if (executingRef.current) return; // one at a time
+    if (positionsRef.current.some((p) => p.id === coin.id)) return;
+    if (positionsRef.current.length >= MAX_POSITIONS) return;
+    executingRef.current = true;
+    try {
+      const tx = await buildBuyTx(coin, addr, config);
+      if (!tx) {
+        pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: "No route", ts: Date.now() });
+        return;
+      }
+      const sig = await submitTx(signRef.current, swallet, tx);
+      openPosition(coin, config, { live: true, txSig: sig, detail: `BOUGHT ${config.amountSol} SOL` });
+    } catch (e: any) {
+      pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: e?.message ? String(e.message).slice(0, 60) : "Buy failed/cancelled", ts: Date.now() });
+    } finally {
+      executingRef.current = false;
+    }
   }
 
   function closePositions(ids: string[], reason: "manual" | "auto" | "tp" | "sl") {
     const idset = new Set(ids);
     const closing = positionsRef.current.filter((p) => idset.has(p.id));
     if (!closing.length) return;
-    const realized = closing.reduce((s, p) => s + p.amountSol * (pnlPct(p) / 100), 0);
-    setRealizedSol((r) => r + realized);
-    setPositions((prev) => prev.filter((p) => !idset.has(p.id)));
-    for (const p of closing) {
+
+    // Live positions are sold on-chain; paper positions just settle locally.
+    const livePos = closing.filter((p) => p.live);
+    const paperPos = closing.filter((p) => !p.live);
+
+    if (paperPos.length) {
+      const realized = paperPos.reduce((s, p) => s + p.amountSol * (pnlPct(p) / 100), 0);
+      setRealizedSol((r) => r + realized);
+      const paperIds = new Set(paperPos.map((p) => p.id));
+      setPositions((prev) => prev.filter((p) => !paperIds.has(p.id)));
+      for (const p of paperPos) {
+        const pnl = pnlPct(p);
+        const tag = reason === "tp" ? "TP hit" : reason === "sl" ? "SL hit" : reason === "auto" ? "auto" : "closed";
+        pushFeed({ key: p.id + "c" + Date.now() + Math.random(), symbol: p.symbol, source: p.source, marketCap: p.currentMc, liquidity: 0, dev: p.dev, kind: "close", detail: `${tag} · ${formatPct(pnl)}`, ok: pnl >= 0, ts: Date.now() });
+      }
+    }
+
+    for (const p of livePos) void sellLivePosition(p, reason);
+  }
+
+  // Execute a REAL on-chain sell (100%) to close a live position.
+  async function sellLivePosition(p: Position, reason: "manual" | "auto" | "tp" | "sl") {
+    const { addr, swallet } = walletRef.current;
+    if (!addr || !swallet) return;
+    const config = cfgRef.current;
+    try {
+      const tx = await buildSellTx(p, addr, config);
+      if (!tx) throw new Error("No route");
+      const sig = await submitTx(signRef.current, swallet, tx);
       const pnl = pnlPct(p);
-      const tag = reason === "tp" ? "TP hit" : reason === "sl" ? "SL hit" : reason === "auto" ? "auto" : "closed";
-      pushFeed({
-        key: p.id + "close" + Date.now() + Math.random(),
-        symbol: p.symbol,
-        source: p.source,
-        marketCap: p.currentMc,
-        liquidity: 0,
-        dev: p.dev,
-        kind: "close",
-        detail: `${tag} · ${formatPct(pnl)}`,
-        ok: pnl >= 0,
-        ts: Date.now(),
-      });
+      setRealizedSol((r) => r + p.amountSol * (pnl / 100));
+      setPositions((prev) => prev.filter((x) => x.id !== p.id));
+      const tag = reason === "tp" ? "TP hit" : reason === "sl" ? "SL hit" : "sold";
+      pushFeed({ key: p.id + "c" + Date.now() + Math.random(), symbol: p.symbol, source: p.source, marketCap: p.currentMc, liquidity: 0, dev: p.dev, kind: "close", detail: `${tag} · ${formatPct(pnl)}`, ok: pnl >= 0, ts: Date.now(), txSig: sig });
+    } catch (e: any) {
+      pushFeed({ key: p.id + "e" + Date.now(), symbol: p.symbol, source: p.source, marketCap: p.currentMc, liquidity: 0, dev: p.dev, kind: "close", detail: e?.message ? String(e.message).slice(0, 60) : "Sell failed/cancelled", ok: false, ts: Date.now() });
     }
   }
 
@@ -148,7 +242,12 @@ export default function Sniper() {
     const decision = evaluateCoin(coin, config);
     setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
     if (decision.action === "buy") {
-      openPosition(coin, config);
+      // Live mode with a connected wallet → real mainnet buy; else paper.
+      if (config.liveTrading && walletRef.current.addr && !coin.id.endsWith("-sim")) {
+        void executeLiveBuy(coin, config);
+      } else {
+        openPosition(coin, config);
+      }
     } else if (Math.random() > 0.6) {
       pushFeed({
         key: coin.id + Date.now(),
@@ -269,10 +368,12 @@ export default function Sniper() {
   function toggleArm() {
     if (!authenticated) return login();
     if (cfg.mode === "dev-wallet" && cfg.devAddresses.length === 0) return;
+    if (cfg.liveTrading && !walletAddr) return login();
     setArmed((a) => !a);
   }
 
   const canArmDev = cfg.mode !== "dev-wallet" || cfg.devAddresses.length > 0;
+  const canArmLive = !cfg.liveTrading || !!walletAddr;
 
   // ---- aggregate PnL ----
   const deployed = positions.reduce((s, p) => s + p.amountSol, 0);
@@ -402,9 +503,45 @@ export default function Sniper() {
 
             <Toggle label="Anti-rug shield" desc="Skip thin-liquidity / risky mints" on={cfg.antiRug} onChange={(v) => set("antiRug", v)} />
             <Toggle label="Auto take-profit / stop-loss" desc="Exit positions automatically" on={cfg.autoSell} onChange={(v) => set("autoSell", v)} />
+            <Toggle
+              label="🔴 Live trading (mainnet)"
+              desc={cfg.liveTrading ? (walletAddr ? `Real buys from ${shortAddr(walletAddr, 4)}` : "Connect a wallet first") : "Off = safe paper/simulation"}
+              on={cfg.liveTrading}
+              onChange={(v) => {
+                if (v && !authenticated) return login();
+                set("liveTrading", v);
+                if (v) setArmed(false);
+              }}
+            />
 
-            <button className={`btn btn-primary btn-block arm-btn ${armed ? "armed" : ""}`} onClick={toggleArm} disabled={!canArmDev && authenticated} style={{ marginTop: 14 }}>
-              {!authenticated ? "🔒 Login to arm sniper" : armed ? "■ Disarm sniper" : !canArmDev ? "Add a dev wallet first" : "▶ Arm sniper"}
+            {cfg.liveTrading && (
+              <div className="warn-banner" style={{ marginTop: 4, marginBottom: 0 }}>
+                <span>⚠️</span>
+                <span>
+                  <b>LIVE mode spends real SOL on mainnet.</b> Each snipe sends a real transaction from
+                  your connected wallet (your wallet approves it — Phantom pops up per trade). Start with a
+                  small buy amount. New tokens are extremely high risk.
+                </span>
+              </div>
+            )}
+
+            <button
+              className={`btn btn-block arm-btn ${armed ? "armed" : ""} ${cfg.liveTrading ? "btn-danger" : "btn-primary"}`}
+              onClick={toggleArm}
+              disabled={authenticated && (!canArmDev || !canArmLive)}
+              style={{ marginTop: 14 }}
+            >
+              {!authenticated
+                ? "🔒 Login to arm sniper"
+                : armed
+                ? "■ Disarm sniper"
+                : !canArmDev
+                ? "Add a dev wallet first"
+                : !canArmLive
+                ? "Connect a wallet for live mode"
+                : cfg.liveTrading
+                ? "🔴 Arm LIVE sniper"
+                : "▶ Arm sniper (paper)"}
             </button>
           </div>
 
@@ -468,9 +605,22 @@ export default function Sniper() {
                             <span className={`coin-src ${p.source === "pump.fun" ? "src-pump" : "src-dex"}`}>
                               {p.source === "pump.fun" ? "pump" : "dex"}
                             </span>
+                            {p.live && (
+                              <span className="coin-src" style={{ background: "rgba(255,45,63,0.18)", color: "var(--red-bright)" }}>
+                                LIVE
+                              </span>
+                            )}
                           </div>
                           <div className="fm-sub">
                             {p.amountSol} SOL · MC {formatCompact(p.entryMc)} → {formatCompact(p.currentMc)}
+                            {p.txSig && (
+                              <>
+                                {" · "}
+                                <a href={solscanTx(p.txSig)} target="_blank" rel="noreferrer" style={{ color: "var(--red-soft)" }}>
+                                  tx
+                                </a>
+                              </>
+                            )}
                           </div>
                         </div>
                         <div className="mono" style={{ textAlign: "right", fontWeight: 700, color: up ? "var(--green)" : "var(--loss)" }}>
@@ -496,10 +646,10 @@ export default function Sniper() {
                   <div className="feed-status">
                     {armed ? (
                       <>
-                        <span className="live-dot" />
-                        <span className="status-armed">
-                          ARMED · scanning {cfg.mode === "dev-wallet" ? "dev wallets" : "new mints"}
-                          {streamOpen ? " · live" : ""}
+                        <span className="live-dot" style={{ background: cfg.liveTrading ? "var(--red-bright)" : "#22e39a" }} />
+                        <span className="status-armed" style={cfg.liveTrading ? { color: "var(--red-bright)" } : undefined}>
+                          {cfg.liveTrading ? "LIVE" : "ARMED"} · scanning {cfg.mode === "dev-wallet" ? "dev wallets" : "new mints"}
+                          {streamOpen ? " · realtime" : ""}
                         </span>
                       </>
                     ) : (
@@ -513,13 +663,25 @@ export default function Sniper() {
                 </div>
               </div>
 
-              <div className="warn-banner">
-                <span>🛡️</span>
-                <span>
-                  Running in <b>secure simulation (paper) mode</b>. Live on-chain execution activates only
-                  after you connect a funded wallet and approve signing — your keys never leave your wallet.
-                </span>
-              </div>
+              {cfg.liveTrading ? (
+                <div className="warn-banner" style={{ borderColor: "var(--border-strong)", background: "rgba(255,45,63,0.08)", color: "var(--red-soft)" }}>
+                  <span>🔴</span>
+                  <span>
+                    <b>LIVE mainnet mode.</b> Real buys/sells execute from your connected wallet
+                    {walletAddr ? ` (${shortAddr(walletAddr, 4)})` : ""} and require your approval. Trade only
+                    what you can afford to lose.
+                  </span>
+                </div>
+              ) : (
+                <div className="warn-banner">
+                  <span>🛡️</span>
+                  <span>
+                    Running in <b>secure paper (simulation) mode</b>. Flip on <b>Live trading</b> in the
+                    strategy panel to execute real mainnet buys with your connected wallet — non-custodial,
+                    keys never leave your wallet.
+                  </span>
+                </div>
+              )}
 
               {feed.length === 0 ? (
                 <div className="feed-empty">
@@ -564,14 +726,34 @@ function FeedRow({ it }: { it: FeedItem }) {
         {it.kind === "buy" ? (
           <>
             <div className="fa-status fa-buy">✔ SNIPED</div>
-            <div style={{ color: "var(--text-mute)" }}>{it.detail}</div>
+            <div style={{ color: "var(--text-mute)" }}>
+              {it.detail}
+              {it.txSig && (
+                <>
+                  {" · "}
+                  <a href={solscanTx(it.txSig)} target="_blank" rel="noreferrer" style={{ color: "var(--red-soft)" }}>
+                    tx
+                  </a>
+                </>
+              )}
+            </div>
           </>
         ) : it.kind === "close" ? (
           <>
             <div className="fa-status" style={{ color: it.ok ? "var(--green)" : "var(--loss)" }}>
               ⟲ CLOSED
             </div>
-            <div style={{ color: "var(--text-mute)" }}>{it.detail}</div>
+            <div style={{ color: "var(--text-mute)" }}>
+              {it.detail}
+              {it.txSig && (
+                <>
+                  {" · "}
+                  <a href={solscanTx(it.txSig)} target="_blank" rel="noreferrer" style={{ color: "var(--red-soft)" }}>
+                    tx
+                  </a>
+                </>
+              )}
+            </div>
           </>
         ) : (
           <>

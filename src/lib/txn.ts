@@ -146,6 +146,58 @@ export function serializeTx(tx: Transaction | VersionedTransaction): Uint8Array 
   return tx.serialize({ requireAllSignatures: false, verifySignatures: false });
 }
 
+// Sign + send a built transaction with the active standard wallet (works for
+// both Privy embedded wallets and external wallets like Phantom). Returns the
+// base58 signature.
+export async function submitTx(signAndSend: any, swallet: any, tx: Transaction | VersionedTransaction): Promise<string> {
+  const res = await signAndSend({
+    transaction: serializeTx(tx),
+    wallet: swallet,
+    chain: "solana:mainnet",
+  });
+  const sig: Uint8Array | string = res?.signature ?? res;
+  return sig instanceof Uint8Array ? base58(sig) : String(sig || "");
+}
+
+// ---- PumpPortal local trade (mainnet buy/sell, non-custodial) ----
+// Returns an unsigned VersionedTransaction the user's wallet signs & sends.
+// Handles pump.fun bonding-curve tokens and migrated pools via pool:"auto".
+export interface PumpTradeArgs {
+  wallet: string;
+  mint: string;
+  action: "buy" | "sell";
+  amount: number | string; // SOL amount (buy) or token amount / "100%" (sell)
+  denominatedInSol: boolean;
+  slippage: number; // percent
+  priorityFee: number; // SOL
+  pool?: string; // "auto" | "pump" | "raydium" | ...
+}
+
+export async function pumpPortalTradeTx(args: PumpTradeArgs): Promise<VersionedTransaction | null> {
+  try {
+    const res = await fetch("https://pumpportal.fun/api/trade-local", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        publicKey: args.wallet,
+        action: args.action,
+        mint: args.mint,
+        amount: args.amount,
+        denominatedInSol: String(args.denominatedInSol),
+        slippage: args.slippage,
+        priorityFee: args.priorityFee,
+        pool: args.pool || "auto",
+      }),
+    });
+    if (!res.ok) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (!buf.length) return null;
+    return VersionedTransaction.deserialize(buf);
+  } catch {
+    return null;
+  }
+}
+
 // Minimal base58 encoder (for signature bytes) — avoids an extra dependency.
 const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 export function base58(bytes: Uint8Array): string {
