@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "LUFF AGENT — an interactive crypto agent platform with a powerful realtime sniper for pump.fun and Dexscreener.",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
