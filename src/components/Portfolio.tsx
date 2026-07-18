@@ -104,20 +104,20 @@ export default function Portfolio() {
             </div>
 
             <div className="card" style={{ marginTop: 18, padding: 6, overflowX: "auto" }}>
-              {loading && !data ? (
-                <div style={{ padding: 30, display: "flex", flexDirection: "column", gap: 10 }}>
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="skeleton" style={{ height: 44, width: "100%" }} />
-                  ))}
-                </div>
-              ) : error && !data?.holdings.length ? (
+              {error && (!data || data.holdings.length === 0) ? (
                 <EmptyRow
                   icon="⚠️"
                   title="Couldn't reach a Solana RPC"
                   sub="The public RPC is busy or blocked. It will retry automatically."
                   action={<button className="btn btn-ghost btn-sm" onClick={() => wallet && load(wallet)}>Retry</button>}
                 />
-              ) : data && data.holdings.length === 0 ? (
+              ) : !data ? (
+                <div style={{ padding: 30, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="skeleton" style={{ height: 44, width: "100%" }} />
+                  ))}
+                </div>
+              ) : data.holdings.length === 0 ? (
                 <EmptyRow icon="👛" title="No assets found" sub="This wallet holds no SOL or SPL tokens yet." />
               ) : (
                 <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
@@ -142,7 +142,7 @@ export default function Portfolio() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data!.holdings.map((h) => (
+                    {data.holdings.map((h) => (
                       <tr key={h.mint} style={{ borderTop: "1px solid var(--border)" }}>
                         <td style={{ padding: "12px 16px" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

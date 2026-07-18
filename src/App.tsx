@@ -7,6 +7,7 @@ import Portfolio from "./components/Portfolio";
 import ProjectDetails from "./components/ProjectDetails";
 import HowToUse from "./components/HowToUse";
 import Footer from "./components/Footer";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 export default function App() {
   return (
@@ -14,9 +15,15 @@ export default function App() {
       <Header />
       <main>
         <Hero />
-        <Markets />
-        <Sniper />
-        <Portfolio />
+        <ErrorBoundary label="Markets are unavailable">
+          <Markets />
+        </ErrorBoundary>
+        <ErrorBoundary label="Sniper is unavailable">
+          <Sniper />
+        </ErrorBoundary>
+        <ErrorBoundary label="Portfolio is unavailable">
+          <Portfolio />
+        </ErrorBoundary>
         <ProjectDetails />
         <HowToUse />
         <CtaStrip />
