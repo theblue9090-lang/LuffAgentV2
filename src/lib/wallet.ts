@@ -80,6 +80,13 @@ async function getTokenAccounts(
     .filter((t: any) => t.mint && t.amount > 0);
 }
 
+// Current SOL balance of a wallet (used by the live sniper to keep going
+// until funds run out).
+export async function fetchSolBalance(address: string): Promise<number> {
+  const r = await rpcCall<any>("getBalance", [address]);
+  return r?.value ? Number(r.value) / 1e9 : 0;
+}
+
 export async function fetchWalletPortfolio(address: string): Promise<WalletPortfolio> {
   const [balRes, solPrice, classic, t2022] = await Promise.all([
     rpcCall<any>("getBalance", [address]),

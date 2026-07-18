@@ -11,6 +11,7 @@ import {
 import type { Coin } from "../lib/market";
 import { joinHub, getRecentCoins, pinMints, type TradeUpdate } from "../lib/pumphub";
 import { pumpPortalTradeTx, submitTx, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx } from "../lib/txn";
+import { fetchSolBalance } from "../lib/wallet";
 import { formatCompact, formatPct, shortAddr } from "../lib/format";
 import NewLaunches from "./NewLaunches";
 import CoinChart from "./CoinChart";
@@ -80,7 +81,8 @@ interface FeedItem {
 }
 
 const AMOUNT_PRESETS = [0.1, 0.5, 1, 2, 5];
-const MAX_POSITIONS = 24;
+const MAX_POSITIONS = 200; // safety ceiling only; the real limit is your SOL balance
+const FEE_BUFFER_SOL = 0.012; // keep a little SOL for fees/priority
 
 const pnlPct = (p: Position) => (p.entryMc > 0 ? (p.currentMc / p.entryMc - 1) * 100 : 0);
 
@@ -110,7 +112,8 @@ export default function Sniper() {
   positionsRef.current = positions;
   const evaluatedRef = useRef<Set<string>>(new Set());
   const lastRealRef = useRef(0);
-  const executingRef = useRef(false); // one live buy at a time (avoid popup storms)
+  const executingRef = useRef(false); // one live buy at a time (avoid nonce/blockhash races)
+  const balanceRef = useRef<number>(Infinity); // live SOL balance (gates buys until funds run out)
   // keep latest wallet + signer available to the (once-registered) hub listener
   const walletRef = useRef<{ addr?: string; swallet: any }>({ addr: walletAddr, swallet });
   walletRef.current = { addr: walletAddr, swallet };
@@ -174,6 +177,11 @@ export default function Sniper() {
     if (executingRef.current) return; // one at a time
     if (positionsRef.current.some((p) => p.id === coin.id)) return;
     if (positionsRef.current.length >= MAX_POSITIONS) return;
+    // Keep sniping until SOL runs out (no spend cap).
+    if (balanceRef.current < config.amountSol + FEE_BUFFER_SOL) {
+      pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: "Insufficient SOL", ts: Date.now() });
+      return;
+    }
     executingRef.current = true;
     try {
       const tx = await buildBuyTx(coin, addr, config);
@@ -182,6 +190,7 @@ export default function Sniper() {
         return;
       }
       const sig = await submitTx(signRef.current, swallet, tx);
+      balanceRef.current = Math.max(0, balanceRef.current - config.amountSol - FEE_BUFFER_SOL); // optimistic
       openPosition(coin, config, { live: true, txSig: sig, detail: `BOUGHT ${config.amountSol} SOL` });
     } catch (e: any) {
       pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: e?.message ? String(e.message).slice(0, 60) : "Buy failed/cancelled", ts: Date.now() });
@@ -349,6 +358,25 @@ export default function Sniper() {
     pinMints(positions.map((p) => p.id));
   }, [positions]);
 
+  // ---- track live SOL balance while armed in live mode (no spend cap) ----
+  useEffect(() => {
+    if (!armed || !cfg.liveTrading || !walletAddr) {
+      balanceRef.current = Infinity; // not gating in paper mode
+      return;
+    }
+    let stop = false;
+    const poll = async () => {
+      const b = await fetchSolBalance(walletAddr);
+      if (!stop) balanceRef.current = b;
+    };
+    poll();
+    const id = setInterval(poll, 8000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [armed, cfg.liveTrading, walletAddr]);
+
   // ---- snipe a coin picked from New Launches ----
   function handleSnipeNew(coin: Coin) {
     setTarget(coin.symbol);
@@ -505,7 +533,7 @@ export default function Sniper() {
             <Toggle label="Auto take-profit / stop-loss" desc="Exit positions automatically" on={cfg.autoSell} onChange={(v) => set("autoSell", v)} />
             <Toggle
               label="🔴 Live trading (mainnet)"
-              desc={cfg.liveTrading ? (walletAddr ? `Real buys from ${shortAddr(walletAddr, 4)}` : "Connect a wallet first") : "Off = safe paper/simulation"}
+              desc={cfg.liveTrading ? (walletAddr ? `Auto-buys from ${shortAddr(walletAddr, 4)}` : "Connect a wallet first") : "Off = safe paper/simulation"}
               on={cfg.liveTrading}
               onChange={(v) => {
                 if (v && !authenticated) return login();
@@ -518,9 +546,10 @@ export default function Sniper() {
               <div className="warn-banner" style={{ marginTop: 4, marginBottom: 0 }}>
                 <span>⚠️</span>
                 <span>
-                  <b>LIVE mode spends real SOL on mainnet.</b> Each snipe sends a real transaction from
-                  your connected wallet (your wallet approves it — Phantom pops up per trade). Start with a
-                  small buy amount. New tokens are extremely high risk.
+                  <b>LIVE mode spends real SOL on mainnet — no spend cap.</b> While armed it keeps buying
+                  matching tokens until your SOL runs out or you disarm. With the <b>embedded wallet</b> trades
+                  are <b>auto-approved</b> (hands-free); external wallets like Phantom still confirm each trade.
+                  New tokens are extremely high risk.
                 </span>
               </div>
             )}
@@ -667,9 +696,10 @@ export default function Sniper() {
                 <div className="warn-banner" style={{ borderColor: "var(--border-strong)", background: "rgba(255,45,63,0.08)", color: "var(--red-soft)" }}>
                   <span>🔴</span>
                   <span>
-                    <b>LIVE mainnet mode.</b> Real buys/sells execute from your connected wallet
-                    {walletAddr ? ` (${shortAddr(walletAddr, 4)})` : ""} and require your approval. Trade only
-                    what you can afford to lose.
+                    <b>LIVE mainnet · auto-approve · no spend cap.</b> Buying &amp; selling from your wallet
+                    {walletAddr ? ` (${shortAddr(walletAddr, 4)})` : ""} until SOL runs out or you disarm.
+                    Embedded wallet fires hands-free; Phantom confirms each trade. Trade only what you can
+                    afford to lose.
                   </span>
                 </div>
               ) : (

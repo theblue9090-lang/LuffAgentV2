@@ -40,7 +40,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         embeddedWallets: {
           ethereum: { createOnLogin: "off" },
           solana: { createOnLogin: "users-without-wallets" },
-          showWalletUIs: true,
+          // Sign & send WITHOUT a confirmation popup, so the sniper can
+          // auto-execute hands-free with the embedded wallet. (External
+          // wallets like Phantom always prompt — that's enforced by the wallet.)
+          showWalletUIs: false,
         },
       }}
     >
