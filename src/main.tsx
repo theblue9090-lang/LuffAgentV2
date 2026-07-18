@@ -24,11 +24,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           showWalletLoginFirst: false,
         },
         loginMethods: ["wallet", "email", "google", "twitter"],
-        // Give every account exactly ONE embedded Solana wallet. Privy embedded
-        // wallets are deterministic per account (HD index 0) and persist across
-        // logout / login, so a user always returns to the same wallet.
+        // Give every account exactly ONE embedded SOLANA wallet (not EVM).
+        // Privy embedded wallets are deterministic per account and persist
+        // across logout / login, so a user always returns to the same wallet.
         embeddedWallets: {
-          createOnLogin: "users-without-wallets",
+          ethereum: { createOnLogin: "off" },
+          solana: { createOnLogin: "users-without-wallets" },
           showWalletUIs: true,
         },
       }}
