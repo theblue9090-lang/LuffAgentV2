@@ -9,6 +9,8 @@
 // SIMULATION (paper) mode so strategies can be tuned risk-free.
 // ============================================================
 
+import type { Coin } from "./market";
+
 export type SniperSource = "pump.fun" | "dexscreener";
 export type SnipeMode = "new-launches" | "dev-wallet";
 
@@ -33,10 +35,10 @@ export const DEFAULT_CONFIG: SniperConfig = {
   mode: "new-launches",
   amountSol: 0.5,
   sources: { pumpfun: true, dexscreener: true },
-  minLiquidity: 5000,
-  minMarketCap: 8000,
-  maxMarketCap: 250000,
-  maxAgeSec: 60,
+  minLiquidity: 2000,
+  minMarketCap: 4000,
+  maxMarketCap: 300000,
+  maxAgeSec: 120,
   slippage: 15,
   priorityFee: 0.001,
   takeProfit: 120,
@@ -89,6 +91,37 @@ export function evaluate(c: Candidate, cfg: SniperConfig): Decision {
   }
 
   return { action: "buy", reason: cfg.mode === "dev-wallet" ? "Dev launch matched" : "All filters passed" };
+}
+
+// ---- Evaluation for a REAL coin from the live hub -------------
+// Uses the fields we actually have on a live coin. Anti-rug for live
+// coins is a best-effort liquidity floor (mint/LP/holder data isn't in
+// the realtime feed).
+export function evaluateCoin(coin: Coin, cfg: SniperConfig): Decision {
+  const ageSec = coin.createdAt ? Math.max(0, Math.round((Date.now() - coin.createdAt) / 1000)) : 0;
+
+  if (cfg.mode === "dev-wallet") {
+    const list = cfg.devAddresses.map((a) => a.trim().toLowerCase()).filter(Boolean);
+    if (!list.length) return { action: "skip", reason: "No dev wallet set" };
+    if (!coin.devAddress || !list.includes(coin.devAddress.toLowerCase()))
+      return { action: "skip", reason: "Dev not tracked" };
+  } else {
+    if (coin.source === "pump.fun" && !cfg.sources.pumpfun) return { action: "skip", reason: "pump.fun off" };
+    if (coin.source === "dexscreener" && !cfg.sources.dexscreener)
+      return { action: "skip", reason: "dexscreener off" };
+  }
+
+  if (ageSec > cfg.maxAgeSec) return { action: "skip", reason: `Too old (${ageSec}s)` };
+  if (coin.liquidity < cfg.minLiquidity) return { action: "skip", reason: "Low liquidity" };
+  if (coin.marketCap < cfg.minMarketCap) return { action: "skip", reason: "MC below floor" };
+  if (coin.marketCap > cfg.maxMarketCap) return { action: "skip", reason: "MC above cap" };
+  if (cfg.antiRug && coin.liquidity < Math.max(cfg.minLiquidity, 2500))
+    return { action: "skip", reason: "Anti-rug: thin liquidity" };
+
+  return {
+    action: "buy",
+    reason: cfg.mode === "dev-wallet" ? "Dev launch matched" : "Filters passed",
+  };
 }
 
 export interface ExecutionResult {
@@ -147,6 +180,30 @@ export function generateCandidate(cfg: SniperConfig): Candidate {
     mintRevoked: Math.random() > 0.35,
     topHolderPct: Math.round(6 + Math.random() * 40),
     createdAt: Date.now(),
+  };
+}
+
+// Synthetic *Coin* for the fallback path (used only when no live coins are
+// flowing, e.g. the realtime host is unreachable) so the demo stays alive.
+export function generateSyntheticCoin(cfg: SniperConfig): Coin {
+  const c = generateCandidate(cfg);
+  return {
+    id: c.id + "-sim",
+    address: c.mint,
+    symbol: c.symbol,
+    name: c.name,
+    priceUsd: 0,
+    change24h: 0,
+    volume24h: 0,
+    liquidity: c.liquidity,
+    marketCap: c.marketCap,
+    source: c.source,
+    dexId: c.source === "pump.fun" ? "pumpfun" : "",
+    chainId: "solana",
+    createdAt: Date.now() - c.ageSec * 1000,
+    devAddress: c.dev,
+    isBondingCurve: c.source === "pump.fun",
+    bondingProgress: Math.min(100, (c.marketCap / 69000) * 100),
   };
 }
 

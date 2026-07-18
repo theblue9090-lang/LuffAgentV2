@@ -1207,6 +1207,90 @@ a {
   box-shadow: 0 8px 26px -8px rgba(34, 227, 154, 0.5);
 }
 
+.sniper-right {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* Positions panel */
+.pos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.btn-danger {
+  background: linear-gradient(120deg, #ff5468, #b3131f);
+  color: #fff;
+  box-shadow: 0 6px 18px -8px rgba(255, 84, 104, 0.5);
+}
+.btn-danger:hover {
+  box-shadow: 0 10px 24px -8px rgba(255, 84, 104, 0.6);
+  transform: translateY(-1px);
+}
+.pos-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.pos-stat {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 77, 94, 0.04);
+}
+.pos-stat .l {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  letter-spacing: 0.06em;
+}
+.pos-stat .v {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.02rem;
+  margin-top: 4px;
+}
+.pos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.pos-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 11px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(255, 77, 94, 0.04);
+}
+.pos-close-btn {
+  background: rgba(255, 84, 104, 0.12);
+  border: 1px solid rgba(255, 84, 104, 0.3);
+  color: var(--loss);
+  border-radius: 8px;
+  padding: 6px 11px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  transition: background 0.14s;
+}
+.pos-close-btn:hover {
+  background: rgba(255, 84, 104, 0.22);
+}
+
 /* Sniper live feed */
 .sniper-feed {
   padding: 22px;
@@ -1678,6 +1762,7 @@ a {
   .nav.open a { padding: 13px 12px; }
   .section { padding: 60px 0; }
   .modal-stats { grid-template-columns: repeat(2, 1fr); }
+  .pos-stats { grid-template-columns: repeat(2, 1fr); }
   .hero-stats { gap: 20px; }
   .cta-strip { padding: 36px 22px; }
 }

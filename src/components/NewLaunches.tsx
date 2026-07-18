@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Coin } from "../lib/market";
-import { fetchNewLaunches, fetchPumpLatest, fetchSolPrice } from "../lib/market";
-import { subscribeNewTokens, type StreamHandle, type TradeUpdate } from "../lib/pumpstream";
+import { joinHub, getRecentCoins, type TradeUpdate } from "../lib/pumphub";
 import { formatCompact, timeAgo, shortAddr } from "../lib/format";
 import Socials from "./Socials";
 
@@ -12,34 +11,29 @@ interface Props {
   onOpen?: (coin: Coin) => void;
 }
 
-const FAST_MS = 3000; // lightweight pump.fun-only refresh for instant new coins
-const FULL_MS = 10000; // richer pump.fun + Dexscreener refresh
-const MAX_WATCH = 14; // cap live trade subscriptions so new mints stay snappy
-
-// Realtime feed of brand-new coins. Truly-new bonding-curve mints stream in
-// live over WebSocket (pump.fun), backed by REST polling from pump.fun +
-// Dexscreener. Each coin's bonding-curve progress updates live on every
-// trade. Newest first, deduped, live-aged.
+// Realtime feed of brand-new coins from the shared hub. Truly-new
+// bonding-curve mints stream in live over WebSocket + fast pump.fun poll;
+// each coin's bonding-curve progress updates live on every trade.
 export default function NewLaunches({ onSnipe, onOpen }: Props) {
-  const [coins, setCoins] = useState<Coin[]>([]);
+  const [coins, setCoins] = useState<Coin[]>(() => getRecentCoins());
   const [src, setSrc] = useState<Src>("all");
-  const [loading, setLoading] = useState(true);
-  const [restLive, setRestLive] = useState(false);
+  const [loading, setLoading] = useState(() => getRecentCoins().length === 0);
   const [streamOpen, setStreamOpen] = useState(false);
+  const [dataLive, setDataLive] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(0);
   const [, forceAge] = useState(0);
-  const seen = useRef<Set<string>>(new Set());
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [pulse, setPulse] = useState<Set<string>>(new Set());
-  const streamRef = useRef<StreamHandle | null>(null);
+  const seen = useRef<Set<string>>(new Set(getRecentCoins().map((c) => c.id)));
+  const ready = useRef(false);
   const pendingTrades = useRef<Map<string, TradeUpdate>>(new Map());
 
-  // Merge coins into the list, newest-first, deduped, capped.
-  function upsert(incoming: Coin[]) {
+  function upsertOne(coin: Coin) {
     setCoins((prev) => {
       const map = new Map<string, Coin>();
-      for (const c of incoming) map.set(c.id, c);
+      map.set(coin.id, coin);
       for (const c of prev) if (!map.has(c.id)) map.set(c.id, c);
+      else if (c.id === coin.id) map.set(c.id, { ...c, ...coin });
       return [...map.values()]
         .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
         .slice(0, 80);
@@ -48,11 +42,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
 
   function markFresh(ids: string[]) {
     if (!ids.length) return;
-    setFresh((f) => {
-      const n = new Set(f);
-      ids.forEach((id) => n.add(id));
-      return n;
-    });
+    setFresh((f) => new Set(f).add(ids[0]));
     setTimeout(() => {
       setFresh((f) => {
         const n = new Set(f);
@@ -60,42 +50,6 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
         return n;
       });
     }, 2800);
-  }
-
-  // Merge freshly fetched coins, flashing genuinely-new ones (not first load).
-  function ingest(data: Coin[]) {
-    if (!data.length) return;
-    const newlyFresh = data.filter((c) => !seen.current.has(c.id)).map((c) => c.id);
-    upsert(data);
-    for (const c of data) seen.current.add(c.id);
-    setUpdatedAt(Date.now());
-    if (seen.current.size > newlyFresh.length) markFresh(newlyFresh);
-  }
-
-  // FAST: pump.fun-only, single request — brand-new coins appear near-instantly.
-  async function loadFast() {
-    try {
-      const data = await fetchPumpLatest(30);
-      if (data.length) setRestLive(true);
-      ingest(data);
-    } catch {
-      /* ignore — full poll / stream will cover it */
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // FULL: pump.fun + Dexscreener for completeness (socials, dex launches).
-  async function loadRest() {
-    try {
-      const data = await fetchNewLaunches(60);
-      setRestLive(true);
-      ingest(data);
-    } catch {
-      setRestLive(false);
-    } finally {
-      setLoading(false);
-    }
   }
 
   function markPulse(ids: string[]) {
@@ -115,32 +69,24 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
   }
 
   useEffect(() => {
-    fetchSolPrice();
-    loadFast();
-    loadRest();
-    const fast = setInterval(loadFast, FAST_MS);
-    const poll = setInterval(loadRest, FULL_MS);
-    const price = setInterval(fetchSolPrice, 30000);
-    const ager = setInterval(() => forceAge((x) => x + 1), 1000);
-
-    // Live WebSocket stream: brand-new mints + per-coin trade updates.
-    const stream = subscribeNewTokens({
+    const leave = joinHub({
       onStatus: setStreamOpen,
-      onToken: (coin) => {
-        if (seen.current.has(coin.id)) return;
+      onCoin: (coin) => {
+        const isNew = !seen.current.has(coin.id);
         seen.current.add(coin.id);
-        upsert([coin]);
-        markFresh([coin.id]);
+        upsertOne(coin);
+        setDataLive(true);
+        setLoading(false);
         setUpdatedAt(Date.now());
+        if (isNew && ready.current) markFresh([coin.id]);
       },
       onTrade: (t) => {
-        // coalesce high-frequency trades; flushed to state on an interval
         pendingTrades.current.set(t.mint, t);
       },
     });
-    streamRef.current = stream;
 
-    // Flush coalesced trade updates into the live bonding-curve bars.
+    const readyT = setTimeout(() => (ready.current = true), 700);
+    const ager = setInterval(() => forceAge((x) => x + 1), 1000);
     const flush = setInterval(() => {
       if (!pendingTrades.current.size) return;
       const updates = pendingTrades.current;
@@ -164,29 +110,12 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     }, 650);
 
     return () => {
-      clearInterval(fast);
-      clearInterval(poll);
-      clearInterval(price);
+      leave();
+      clearTimeout(readyT);
       clearInterval(ager);
       clearInterval(flush);
-      stream.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Keep live trade subscriptions in sync with the pump.fun coins on screen.
-  const watchKey = useMemo(
-    () =>
-      coins
-        .filter((c) => c.source === "pump.fun")
-        .slice(0, MAX_WATCH)
-        .map((c) => c.id)
-        .join(","),
-    [coins]
-  );
-  useEffect(() => {
-    streamRef.current?.watchTrades(watchKey ? watchKey.split(",") : []);
-  }, [watchKey]);
 
   const filtered = coins.filter((c) => (src === "all" ? true : c.source === src));
   const counts = {
@@ -194,7 +123,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     "pump.fun": coins.filter((c) => c.source === "pump.fun").length,
     dexscreener: coins.filter((c) => c.source === "dexscreener").length,
   };
-  const live = streamOpen || restLive;
+  const live = streamOpen || dataLive;
 
   return (
     <div className="card nl-panel">
@@ -205,7 +134,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
           <span className="nl-count">{filtered.length} coins</span>
           {streamOpen && (
             <span className="nl-count" style={{ color: "#22e39a", borderColor: "rgba(34,227,154,0.4)" }}>
-              ● LIVE bonding-curve stream
+              ● LIVE stream
             </span>
           )}
         </div>
@@ -254,7 +183,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
 
       <div className="data-note">
         <span>📡</span>
-        Live bonding-curve stream + REST from pump.fun and Dexscreener
+        Live bonding-curve stream + fast pump.fun &amp; Dexscreener polling
         {updatedAt ? ` · updated ${timeAgo(updatedAt)}` : ""}. Falls back to samples if a
         source is unreachable.
       </div>
