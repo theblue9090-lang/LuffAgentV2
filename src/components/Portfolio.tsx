@@ -1,68 +1,76 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { formatCompact, formatPct, formatPrice, shortAddr } from "../lib/format";
+import { fetchWalletPortfolio, type WalletPortfolio } from "../lib/wallet";
+import { formatCompact, formatPrice, shortAddr } from "../lib/format";
 
-interface Position {
-  symbol: string;
-  source: "pump.fun" | "dexscreener";
-  entry: number;
-  amountSol: number;
-  pnl: number; // %
+// Format a token balance compactly.
+function amt(n: number): string {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(2) + "K";
+  if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 3 });
+  return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
 }
-
-const SEED: Position[] = [
-  { symbol: "GIGA", source: "pump.fun", entry: 0.0000041, amountSol: 0.5, pnl: 214 },
-  { symbol: "AI16Z", source: "dexscreener", entry: 0.21, amountSol: 1, pnl: 46 },
-  { symbol: "REDSHOT", source: "pump.fun", entry: 0.00009, amountSol: 0.5, pnl: -22 },
-  { symbol: "GOAT", source: "pump.fun", entry: 0.41, amountSol: 2, pnl: 88 },
-  { symbol: "BOME", source: "dexscreener", entry: 0.0019, amountSol: 0.3, pnl: 12 },
-];
 
 export default function Portfolio() {
   const { ready, authenticated, user, login } = usePrivy();
-  const [positions, setPositions] = useState<Position[]>(SEED);
-
-  // live PnL drift for a lively dashboard
-  useEffect(() => {
-    if (!authenticated) return;
-    const id = setInterval(() => {
-      setPositions((ps) =>
-        ps.map((p) => ({ ...p, pnl: p.pnl + (Math.random() - 0.48) * 6 }))
-      );
-    }, 2500);
-    return () => clearInterval(id);
-  }, [authenticated]);
-
-  const totals = useMemo(() => {
-    const invested = positions.reduce((s, p) => s + p.amountSol, 0);
-    const value = positions.reduce((s, p) => s + p.amountSol * (1 + p.pnl / 100), 0);
-    const pnlPct = invested ? ((value - invested) / invested) * 100 : 0;
-    return { invested, value, pnlPct, open: positions.length };
-  }, [positions]);
-
   const wallet = user?.wallet?.address;
+
+  const [data, setData] = useState<WalletPortfolio | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  const load = useCallback(async (address: string) => {
+    setLoading(true);
+    setError(false);
+    try {
+      const p = await fetchWalletPortfolio(address);
+      setData(p);
+      if (!p.ok) setError(true);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated || !wallet) {
+      setData(null);
+      return;
+    }
+    load(wallet);
+    const poll = setInterval(() => load(wallet), 30000);
+    return () => clearInterval(poll);
+  }, [authenticated, wallet, load]);
 
   return (
     <section className="section" id="portfolio">
       <div className="container">
         <div className="section-eyebrow">Agent Portfolio</div>
         <h2 className="section-title">
-          Your sniper positions, <span className="accent">live</span>
+          Your wallet, <span className="accent">live on-chain</span>
         </h2>
         <p className="section-sub">
-          Track every position your agent opens, realized and unrealized PnL, and
-          the wallet powering it — all in one dashboard.
+          LUFF AGENT reads the real assets in your connected Solana wallet — SOL and every
+          SPL token — priced live. Nothing is stored; it's your wallet, on-chain.
         </p>
 
-        {!ready ? null : !authenticated ? (
+        {!ready ? (
+          <div className="card" style={{ padding: 40, textAlign: "center", marginTop: 28, color: "var(--text-mute)" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }} className="mono">
+              <span className="live-dot" style={{ background: "var(--amber)" }} /> Connecting to wallet…
+            </div>
+          </div>
+        ) : !authenticated || !wallet ? (
           <div className="card" style={{ padding: 40, textAlign: "center", marginTop: 28 }}>
             <div style={{ fontSize: "2.6rem", marginBottom: 12 }}>🔐</div>
             <h3 style={{ fontFamily: "var(--font-display)", margin: "0 0 8px" }}>
               Connect to view your portfolio
             </h3>
-            <p style={{ color: "var(--text-dim)", maxWidth: 420, margin: "0 auto 22px" }}>
-              Login with your wallet, email or social via Privy to unlock your agent
-              dashboard and position tracking.
+            <p style={{ color: "var(--text-dim)", maxWidth: 440, margin: "0 auto 22px" }}>
+              Login with your wallet, email or social via Privy. LUFF AGENT will read your
+              Solana balances directly from the chain — read-only, non-custodial.
             </p>
             <button className="btn btn-primary" onClick={login}>
               Connect wallet
@@ -78,69 +86,102 @@ export default function Portfolio() {
                 marginTop: 28,
               }}
             >
-              <SummaryCard label="Wallet" value={wallet ? shortAddr(wallet, 5) : "Embedded"} mono />
-              <SummaryCard label="Open positions" value={String(totals.open)} />
-              <SummaryCard label="Deployed" value={`${totals.invested.toFixed(2)} SOL`} />
+              <SummaryCard label="Wallet" value={shortAddr(wallet, 5)} mono />
               <SummaryCard
-                label="Unrealized PnL"
-                value={formatPct(totals.pnlPct)}
-                accent={totals.pnlPct >= 0 ? "up" : "down"}
+                label="Total value"
+                value={data ? formatCompact(data.totalUsd) : loading ? "…" : "—"}
+                accent="up"
+              />
+              <SummaryCard
+                label="SOL balance"
+                value={data ? `${data.solBalance.toFixed(3)}` : loading ? "…" : "—"}
+                unit="SOL"
+              />
+              <SummaryCard
+                label="Tokens"
+                value={data ? String(data.holdings.length) : loading ? "…" : "—"}
               />
             </div>
 
             <div className="card" style={{ marginTop: 18, padding: 6, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
-                <thead>
-                  <tr style={{ textAlign: "left" }}>
-                    {["Token", "Source", "Entry", "Size", "PnL", "Value"].map((h) => (
-                      <th
-                        key={h}
-                        style={{
-                          padding: "14px 16px",
-                          fontFamily: "var(--font-mono)",
-                          fontSize: "0.72rem",
-                          textTransform: "uppercase",
-                          letterSpacing: "0.06em",
-                          color: "var(--text-mute)",
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map((p) => {
-                    const up = p.pnl >= 0;
-                    const value = p.amountSol * (1 + p.pnl / 100);
-                    return (
-                      <tr key={p.symbol} style={{ borderTop: "1px solid var(--border)" }}>
-                        <td style={{ padding: "13px 16px", fontWeight: 600 }}>{p.symbol}</td>
-                        <td style={{ padding: "13px 16px" }}>
-                          <span className={`coin-src ${p.source === "pump.fun" ? "src-pump" : "src-dex"}`}>
-                            {p.source === "pump.fun" ? "pump" : "dex"}
-                          </span>
-                        </td>
-                        <td className="mono" style={{ padding: "13px 16px", color: "var(--text-dim)" }}>
-                          {formatPrice(p.entry)}
-                        </td>
-                        <td className="mono" style={{ padding: "13px 16px" }}>{p.amountSol} SOL</td>
-                        <td
-                          className="mono"
-                          style={{ padding: "13px 16px", fontWeight: 700, color: up ? "var(--green)" : "var(--loss)" }}
+              {loading && !data ? (
+                <div style={{ padding: 30, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="skeleton" style={{ height: 44, width: "100%" }} />
+                  ))}
+                </div>
+              ) : error && !data?.holdings.length ? (
+                <EmptyRow
+                  icon="⚠️"
+                  title="Couldn't reach a Solana RPC"
+                  sub="The public RPC is busy or blocked. It will retry automatically."
+                  action={<button className="btn btn-ghost btn-sm" onClick={() => wallet && load(wallet)}>Retry</button>}
+                />
+              ) : data && data.holdings.length === 0 ? (
+                <EmptyRow icon="👛" title="No assets found" sub="This wallet holds no SOL or SPL tokens yet." />
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left" }}>
+                      {["Asset", "Balance", "Price", "Value"].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: "14px 16px",
+                            fontFamily: "var(--font-mono)",
+                            fontSize: "0.72rem",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                            color: "var(--text-mute)",
+                            textAlign: h === "Asset" ? "left" : "right",
+                          }}
                         >
-                          {formatPct(p.pnl)}
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data!.holdings.map((h) => (
+                      <tr key={h.mint} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            {h.imageUrl ? (
+                              <img
+                                src={h.imageUrl}
+                                alt=""
+                                style={{ width: 30, height: 30, borderRadius: 9, objectFit: "cover", border: "1px solid var(--border)" }}
+                                onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
+                              />
+                            ) : (
+                              <div className="coin-logo" style={{ width: 30, height: 30, fontSize: "0.7rem" }}>
+                                {h.symbol.slice(0, 3)}
+                              </div>
+                            )}
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 600 }}>{h.symbol}</div>
+                              <div style={{ fontSize: "0.76rem", color: "var(--text-mute)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }}>
+                                {h.name}
+                              </div>
+                            </div>
+                          </div>
                         </td>
-                        <td className="mono" style={{ padding: "13px 16px" }}>{value.toFixed(3)} SOL</td>
+                        <td className="mono" style={{ padding: "12px 16px", textAlign: "right" }}>{amt(h.amount)}</td>
+                        <td className="mono" style={{ padding: "12px 16px", textAlign: "right", color: "var(--text-dim)" }}>
+                          {h.priceUsd > 0 ? formatPrice(h.priceUsd) : "—"}
+                        </td>
+                        <td className="mono" style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600 }}>
+                          {h.valueUsd > 0 ? formatCompact(h.valueUsd) : "—"}
+                        </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
             <div className="data-note">
-              <span>ℹ️</span> Demo positions shown in paper mode. Connect a funded wallet to
-              trade live.
+              <span>🔒</span> Read-only, non-custodial. Balances fetched live from Solana RPC and
+              priced via Dexscreener. Refreshes every 30s.
             </div>
           </>
         )}
@@ -149,15 +190,28 @@ export default function Portfolio() {
   );
 }
 
+function EmptyRow({ icon, title, sub, action }: { icon: string; title: string; sub: string; action?: React.ReactNode }) {
+  return (
+    <div style={{ padding: 40, textAlign: "center" }}>
+      <div style={{ fontSize: "2.2rem", marginBottom: 10 }}>{icon}</div>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{title}</div>
+      <div style={{ color: "var(--text-mute)", fontSize: "0.88rem", marginBottom: action ? 16 : 0 }}>{sub}</div>
+      {action}
+    </div>
+  );
+}
+
 function SummaryCard({
   label,
   value,
   mono,
+  unit,
   accent,
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  unit?: string;
   accent?: "up" | "down";
 }) {
   const color = accent === "up" ? "var(--green)" : accent === "down" ? "var(--loss)" : "var(--text)";
@@ -177,6 +231,7 @@ function SummaryCard({
       </div>
       <div style={{ fontFamily: mono ? "var(--font-mono)" : "var(--font-display)", fontWeight: 700, fontSize: "1.35rem", color }}>
         {value}
+        {unit ? <span style={{ fontSize: "0.8rem", color: "var(--text-mute)" }}> {unit}</span> : null}
       </div>
     </div>
   );

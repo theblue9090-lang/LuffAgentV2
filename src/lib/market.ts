@@ -219,6 +219,31 @@ async function fetchPairsForAddresses(addresses: string[]): Promise<any[]> {
   return results.flatMap((r) => r?.pairs || []);
 }
 
+export interface TokenMeta {
+  priceUsd: number;
+  symbol: string;
+  name: string;
+  imageUrl?: string;
+}
+
+// Resolve price + name/symbol/logo for a set of token mints (for portfolios).
+export async function fetchTokenMeta(mints: string[]): Promise<Map<string, TokenMeta>> {
+  const out = new Map<string, TokenMeta>();
+  if (!mints.length) return out;
+  const pairs = await fetchPairsForAddresses(mints);
+  for (const p of bestPairPerToken(pairs)) {
+    const addr = p.baseToken?.address;
+    if (!addr) continue;
+    out.set(addr, {
+      priceUsd: num(p.priceUsd),
+      symbol: (p.baseToken?.symbol || "").toUpperCase(),
+      name: p.baseToken?.name || "",
+      imageUrl: normalizeUri(p.info?.imageUrl),
+    });
+  }
+  return out;
+}
+
 // Map a pump.fun REST coin object to a Coin (includes socials + progress).
 function pumpRestToCoin(c: any): Coin {
   const mc = num(c.usd_market_cap) || num(c.market_cap);
