@@ -3,6 +3,9 @@
 // Subscribes to brand-new token *creation* events over WebSocket
 // (PumpPortal `subscribeNewToken`), so freshly launched bonding-curve
 // coins appear in the feed the instant they are minted — no polling lag.
+// Also subscribes to *token trades* for the coins on screen, so each
+// coin's bonding-curve progress / market cap updates live on every buy
+// and sell, exactly like pump.fun.
 // Falls back silently if the socket can't connect (e.g. blocked host).
 // ============================================================
 
@@ -10,14 +13,27 @@ import type { Coin } from "./market";
 import { cachedSolPrice, GRADUATION_MC_USD, normalizeUri } from "./market";
 
 const WS_URL = "wss://pumpportal.fun/api/data";
+const MAX_WATCH = 45; // cap live trade subscriptions
+
+export interface TradeUpdate {
+  mint: string;
+  marketCap: number; // USD
+  liquidity: number; // USD
+  bondingProgress: number; // % toward graduation
+  txType: "buy" | "sell";
+  solAmount: number; // SOL traded
+}
 
 export interface StreamHandle {
   close: () => void;
   isOpen: () => boolean;
+  // Subscribe live trades for this exact set of mints (diffed internally).
+  watchTrades: (mints: string[]) => void;
 }
 
 interface Options {
   onToken: (coin: Coin) => void;
+  onTrade?: (t: TradeUpdate) => void;
   onStatus?: (open: boolean) => void;
 }
 
@@ -101,12 +117,37 @@ function enqueueEnrich(job: EnrichJob) {
   pumpEnrich();
 }
 
+// Turn a trade event into a live bonding-curve update.
+function eventToTrade(d: any): TradeUpdate | null {
+  if (!d?.mint) return null;
+  const sol = cachedSolPrice() || 170;
+  const mcUsd = num(d.marketCapSol) * sol;
+  const liqUsd = num(d.vSolInBondingCurve) * sol;
+  return {
+    mint: d.mint,
+    marketCap: mcUsd,
+    liquidity: liqUsd,
+    bondingProgress: Math.min(100, (mcUsd / GRADUATION_MC_USD) * 100),
+    txType: d.txType === "sell" ? "sell" : "buy",
+    solAmount: num(d.solAmount),
+  };
+}
+
 export function subscribeNewTokens(opts: Options): StreamHandle {
   let ws: WebSocket | null = null;
   let closed = false;
   let open = false;
   let retry = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let watched = new Set<string>(); // mints with live trade subscriptions
+
+  const send = (obj: any) => {
+    try {
+      ws?.send(JSON.stringify(obj));
+    } catch {
+      /* ignore */
+    }
+  };
 
   const connect = () => {
     if (closed) return;
@@ -121,24 +162,24 @@ export function subscribeNewTokens(opts: Options): StreamHandle {
       retry = 0;
       open = true;
       opts.onStatus?.(true);
-      try {
-        ws?.send(JSON.stringify({ method: "subscribeNewToken" }));
-      } catch {
-        /* ignore */
-      }
+      send({ method: "subscribeNewToken" });
+      // re-arm trade subscriptions after a (re)connect
+      if (watched.size) send({ method: "subscribeTokenTrade", keys: [...watched] });
     };
 
     ws.onmessage = (ev) => {
       try {
         const d = JSON.parse(typeof ev.data === "string" ? ev.data : "");
-        // creation events carry txType 'create'; ignore trade/other messages
-        if (d?.txType && d.txType !== "create") return;
         if (!d?.mint) return;
-        const coin = eventToCoin(d);
-        if (!coin) return;
-        opts.onToken(coin); // show instantly
-        if (d.uri) enqueueEnrich({ uri: d.uri, base: coin, emit: opts.onToken }); // then add logo + socials
-
+        if (d.txType === "create") {
+          const coin = eventToCoin(d);
+          if (!coin) return;
+          opts.onToken(coin); // show instantly
+          if (d.uri) enqueueEnrich({ uri: d.uri, base: coin, emit: opts.onToken }); // logo + socials
+        } else if (d.txType === "buy" || d.txType === "sell") {
+          const t = eventToTrade(d);
+          if (t) opts.onTrade?.(t);
+        }
       } catch {
         /* ignore malformed frames */
       }
@@ -173,6 +214,15 @@ export function subscribeNewTokens(opts: Options): StreamHandle {
 
   return {
     isOpen: () => open,
+    watchTrades: (mints: string[]) => {
+      const next = new Set(mints.filter(Boolean).slice(0, MAX_WATCH));
+      const toAdd = [...next].filter((m) => !watched.has(m));
+      const toRemove = [...watched].filter((m) => !next.has(m));
+      watched = next;
+      if (!open) return; // will re-arm on connect
+      if (toAdd.length) send({ method: "subscribeTokenTrade", keys: toAdd });
+      if (toRemove.length) send({ method: "unsubscribeTokenTrade", keys: toRemove });
+    },
     close: () => {
       closed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);

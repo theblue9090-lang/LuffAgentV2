@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Coin } from "../lib/market";
 import { fetchNewLaunches, fetchSolPrice } from "../lib/market";
-import { subscribeNewTokens } from "../lib/pumpstream";
+import { subscribeNewTokens, type StreamHandle, type TradeUpdate } from "../lib/pumpstream";
 import { formatCompact, timeAgo, shortAddr } from "../lib/format";
 import Socials from "./Socials";
 
@@ -13,10 +13,12 @@ interface Props {
 }
 
 const REFRESH_MS = 6000;
+const MAX_WATCH = 45;
 
 // Realtime feed of brand-new coins. Truly-new bonding-curve mints stream in
 // live over WebSocket (pump.fun), backed by REST polling from pump.fun +
-// Dexscreener. Newest first, deduped, live-aged.
+// Dexscreener. Each coin's bonding-curve progress updates live on every
+// trade. Newest first, deduped, live-aged.
 export default function NewLaunches({ onSnipe, onOpen }: Props) {
   const [coins, setCoins] = useState<Coin[]>([]);
   const [src, setSrc] = useState<Src>("all");
@@ -27,6 +29,9 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
   const [, forceAge] = useState(0);
   const seen = useRef<Set<string>>(new Set());
   const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const [pulse, setPulse] = useState<Set<string>>(new Set());
+  const streamRef = useRef<StreamHandle | null>(null);
+  const pendingTrades = useRef<Map<string, TradeUpdate>>(new Map());
 
   // Merge coins into the list, newest-first, deduped, capped.
   function upsert(incoming: Coin[]) {
@@ -73,6 +78,22 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     }
   }
 
+  function markPulse(ids: string[]) {
+    if (!ids.length) return;
+    setPulse((p) => {
+      const n = new Set(p);
+      ids.forEach((id) => n.add(id));
+      return n;
+    });
+    setTimeout(() => {
+      setPulse((p) => {
+        const n = new Set(p);
+        ids.forEach((id) => n.delete(id));
+        return n;
+      });
+    }, 900);
+  }
+
   useEffect(() => {
     fetchSolPrice();
     loadRest();
@@ -80,7 +101,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     const price = setInterval(fetchSolPrice, 30000);
     const ager = setInterval(() => forceAge((x) => x + 1), 1000);
 
-    // Live WebSocket stream of brand-new bonding-curve mints.
+    // Live WebSocket stream: brand-new mints + per-coin trade updates.
     const stream = subscribeNewTokens({
       onStatus: setStreamOpen,
       onToken: (coin) => {
@@ -90,16 +111,59 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
         markFresh([coin.id]);
         setUpdatedAt(Date.now());
       },
+      onTrade: (t) => {
+        // coalesce high-frequency trades; flushed to state on an interval
+        pendingTrades.current.set(t.mint, t);
+      },
     });
+    streamRef.current = stream;
+
+    // Flush coalesced trade updates into the live bonding-curve bars.
+    const flush = setInterval(() => {
+      if (!pendingTrades.current.size) return;
+      const updates = pendingTrades.current;
+      pendingTrades.current = new Map();
+      const ids = [...updates.keys()];
+      setCoins((prev) =>
+        prev.map((c) => {
+          const u = updates.get(c.id);
+          if (!u) return c;
+          return {
+            ...c,
+            marketCap: u.marketCap,
+            liquidity: u.liquidity || c.liquidity,
+            bondingProgress: u.bondingProgress,
+            isBondingCurve: u.bondingProgress < 100,
+          };
+        })
+      );
+      markPulse(ids);
+      setUpdatedAt(Date.now());
+    }, 650);
 
     return () => {
       clearInterval(poll);
       clearInterval(price);
       clearInterval(ager);
+      clearInterval(flush);
       stream.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep live trade subscriptions in sync with the pump.fun coins on screen.
+  const watchKey = useMemo(
+    () =>
+      coins
+        .filter((c) => c.source === "pump.fun")
+        .slice(0, MAX_WATCH)
+        .map((c) => c.id)
+        .join(","),
+    [coins]
+  );
+  useEffect(() => {
+    streamRef.current?.watchTrades(watchKey ? watchKey.split(",") : []);
+  }, [watchKey]);
 
   const filtered = coins.filter((c) => (src === "all" ? true : c.source === src));
   const counts = {
@@ -157,6 +221,7 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
               key={c.id}
               coin={c}
               fresh={fresh.has(c.id)}
+              pulsing={pulse.has(c.id)}
               onSnipe={onSnipe}
               onOpen={onOpen}
             />
@@ -177,11 +242,13 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
 function NLCard({
   coin,
   fresh,
+  pulsing,
   onSnipe,
   onOpen,
 }: {
   coin: Coin;
   fresh: boolean;
+  pulsing?: boolean;
   onSnipe?: (c: Coin) => void;
   onOpen?: (c: Coin) => void;
 }) {
@@ -214,11 +281,14 @@ function NLCard({
       </div>
 
       {showProg && (
-        <div className="nl-bonding" title="Bonding curve progress toward graduation">
-          <div className="nl-bonding-bar">
+        <div className="nl-bonding" title="Live bonding-curve progress toward graduation">
+          <div className={`nl-bonding-bar ${pulsing ? "pulse" : ""}`}>
             <span style={{ width: `${Math.max(2, Math.min(100, prog!))}%` }} />
           </div>
-          <span className="nl-bonding-pct">{prog! >= 100 ? "graduated" : `${prog!.toFixed(0)}%`}</span>
+          <span className="nl-bonding-pct">
+            {pulsing && <span className="nl-live-dot" />}
+            {prog! >= 100 ? "graduated" : `${prog!.toFixed(1)}%`}
+          </span>
         </div>
       )}
 

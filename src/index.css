@@ -931,7 +931,15 @@ a {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--red), var(--red-bright), var(--green));
-  transition: width 0.4s ease;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nl-bonding-bar.pulse {
+  box-shadow: 0 0 0 1px rgba(34, 227, 154, 0.5), 0 0 10px rgba(34, 227, 154, 0.35);
+  animation: barPulse 0.9s ease;
+}
+@keyframes barPulse {
+  0% { box-shadow: 0 0 0 1px rgba(34, 227, 154, 0.7), 0 0 14px rgba(34, 227, 154, 0.55); }
+  100% { box-shadow: none; }
 }
 .nl-bonding-pct {
   font-family: var(--font-mono);
@@ -939,6 +947,17 @@ a {
   color: var(--text-mute);
   white-space: nowrap;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.nl-live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--green);
 }
 .nl-meta {
   display: flex;
