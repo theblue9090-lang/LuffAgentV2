@@ -8,8 +8,8 @@ import CoinChart from "./CoinChart";
 type Tab = "top" | "movers" | "new";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "top", label: "Top Coins", icon: "🏆" },
-  { id: "movers", label: "Movers", icon: "🚀" },
+  { id: "top", label: "Top Coins · Trending", icon: "🏆" },
+  { id: "movers", label: "Gainers", icon: "📈" },
   { id: "new", label: "New Launches", icon: "✨" },
 ];
 
@@ -47,7 +47,7 @@ export default function Markets() {
 
   useEffect(() => {
     load(tab);
-    const poll = setInterval(() => load(tab), 45000); // refresh real data
+    const poll = setInterval(() => load(tab), 20000); // refresh real data
     return () => clearInterval(poll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -121,8 +121,17 @@ export default function Markets() {
 }
 
 function CoinCard({ coin, livePrice, onOpen }: { coin: Coin; livePrice: number; onOpen: () => void }) {
+  // Live 24h %: re-anchor the known 24h-ago price and recompute against the
+  // ticking live price, so the percentage moves in realtime with the price.
+  const price24hAgo = useMemo(() => {
+    const denom = 1 + (coin.change24h || 0) / 100;
+    return denom > 0 ? coin.priceUsd / denom : coin.priceUsd;
+  }, [coin.priceUsd, coin.change24h]);
+  const liveChange =
+    price24hAgo > 0 ? (livePrice / price24hAgo - 1) * 100 : coin.change24h || 0;
+  const up = liveChange >= 0;
   const series = useMemo(() => buildSeries(coin, 40), [coin.id, coin.change24h]);
-  const up = (coin.change24h || 0) >= 0;
+  const hasChange = coin.change24h !== 0 || !!coin.marketCap;
 
   return (
     <div className="card coin-card" onClick={onOpen}>
@@ -153,8 +162,8 @@ function CoinCard({ coin, livePrice, onOpen }: { coin: Coin; livePrice: number; 
 
       <div className="coin-price-row">
         <span className="coin-price">{formatPrice(livePrice)}</span>
-        {coin.change24h !== 0 || coin.marketCap ? (
-          <span className={`chg ${up ? "up" : "down"}`}>{formatPct(coin.change24h)}</span>
+        {hasChange ? (
+          <span className={`chg ${up ? "up" : "down"}`}>{formatPct(liveChange)}</span>
         ) : (
           <span className="pill">{coin.createdAt ? timeAgo(coin.createdAt) : "new"}</span>
         )}

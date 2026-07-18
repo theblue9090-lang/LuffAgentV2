@@ -131,27 +131,61 @@ function bestPairPerToken(pairs: any[]): any[] {
   return [...byToken.values()];
 }
 
-// ---- TOP COINS -------------------------------------------------
-export async function fetchTopCoins(): Promise<Coin[]> {
-  const data = await getJson<{ pairs: any[] }>(`${DS}/latest/dex/tokens/${TOP_MINTS.join(",")}`);
-  if (!data?.pairs?.length) return SAMPLE_TOP;
-  const coins = bestPairPerToken(data.pairs).map((p) => pairToCoin(p, "dexscreener"));
-  coins.sort((a, b) => b.volume24h - a.volume24h);
-  return coins.slice(0, 12);
+// ---- SHARED CANDIDATE POOL (trending Solana coins) -------------
+// Builds one realtime pool of Solana coins from pump.fun + Dexscreener
+// trending/boosted sources, enriched with accurate Dexscreener pair
+// metrics (price, volume, 24h change). Top Coins & Movers rank this pool.
+let poolCache: { at: number; coins: Coin[] } = { at: 0, coins: [] };
+
+export async function fetchSolPool(): Promise<Coin[]> {
+  if (Date.now() - poolCache.at < 12000 && poolCache.coins.length) return poolCache.coins;
+
+  const [boostTop, boostLatest, pumpTop, pumpLive, search] = await Promise.all([
+    getJson<any[]>(`${DS}/token-boosts/top/v1`),
+    getJson<any[]>(`${DS}/token-boosts/latest/v1`),
+    getJson<any[]>(
+      "https://frontend-api-v3.pump.fun/coins?offset=0&limit=48&sort=market_cap&order=DESC&includeNsfw=false"
+    ),
+    getJson<any[]>(
+      "https://frontend-api-v3.pump.fun/coins?offset=0&limit=48&sort=last_trade_timestamp&order=DESC&includeNsfw=false"
+    ),
+    getJson<{ pairs: any[] }>(`${DS}/latest/dex/search?q=SOL`),
+  ]);
+
+  const addrs = new Set<string>();
+  for (const b of boostTop || []) if (b.chainId === "solana" && b.tokenAddress) addrs.add(b.tokenAddress);
+  for (const b of boostLatest || []) if (b.chainId === "solana" && b.tokenAddress) addrs.add(b.tokenAddress);
+  for (const c of pumpTop || []) if (c?.mint) addrs.add(c.mint);
+  for (const c of pumpLive || []) if (c?.mint) addrs.add(c.mint);
+  // top-volume Solana pairs from a broad search
+  const sp = (search?.pairs || []).filter((p) => p.chainId === "solana");
+  sp.sort((a, b) => num(b.volume?.h24) - num(a.volume?.h24));
+  for (const p of sp.slice(0, 40)) if (p.baseToken?.address) addrs.add(p.baseToken.address);
+
+  if (!addrs.size) return [];
+  const pairs = await fetchPairsForAddresses([...addrs]);
+  const coins = bestPairPerToken(pairs)
+    .map((p) => pairToCoin(p, p.dexId?.includes("pump") ? "pump.fun" : "dexscreener"))
+    .filter((c) => c.priceUsd > 0 && c.liquidity >= 1000);
+
+  poolCache = { at: Date.now(), coins };
+  return coins;
 }
 
-// ---- MOVERS (boosted / trending) -------------------------------
+// ---- TOP COINS (trending — ranked by 24h volume) ---------------
+export async function fetchTopCoins(): Promise<Coin[]> {
+  const pool = await fetchSolPool();
+  if (!pool.length) return SAMPLE_TOP;
+  return [...pool].sort((a, b) => b.volume24h - a.volume24h).slice(0, 12);
+}
+
+// ---- MOVERS (gainers — ranked by 24h % change) -----------------
 export async function fetchMovers(): Promise<Coin[]> {
-  const boosts = await getJson<any[]>(`${DS}/token-boosts/top/v1`);
-  const sol = (boosts || []).filter((b) => b.chainId === "solana").slice(0, 20);
-  if (!sol.length) return SAMPLE_MOVERS;
-  const addrs = sol.map((b) => b.tokenAddress).slice(0, 20);
-  const data = await getJson<{ pairs: any[] }>(`${DS}/latest/dex/tokens/${addrs.join(",")}`);
-  if (!data?.pairs?.length) return SAMPLE_MOVERS;
-  const coins = bestPairPerToken(data.pairs).map((p) => pairToCoin(p, "dexscreener"));
-  // biggest absolute 24h movement first
-  coins.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
-  return coins.slice(0, 12);
+  const pool = await fetchSolPool();
+  if (!pool.length) return SAMPLE_MOVERS;
+  const gainers = pool.filter((c) => c.change24h > 0).sort((a, b) => b.change24h - a.change24h);
+  const ranked = gainers.length >= 6 ? gainers : [...pool].sort((a, b) => b.change24h - a.change24h);
+  return ranked.slice(0, 12);
 }
 
 // Current SOL/USD price (cached), used to convert on-chain SOL amounts to USD.
