@@ -138,3 +138,33 @@ export async function jupiterSwapTx(quote: JupQuote, userPublicKey: string): Pro
 export function solscanTx(sig: string): string {
   return `https://solscan.io/tx/${sig}`;
 }
+
+// Serialize a (legacy or versioned) transaction to raw bytes for a
+// standard-wallet signAndSend call (the wallet adds the signature).
+export function serializeTx(tx: Transaction | VersionedTransaction): Uint8Array {
+  if (tx instanceof VersionedTransaction) return tx.serialize();
+  return tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+}
+
+// Minimal base58 encoder (for signature bytes) — avoids an extra dependency.
+const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+export function base58(bytes: Uint8Array): string {
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  const digits: number[] = [];
+  for (let i = zeros; i < bytes.length; i++) {
+    let carry = bytes[i];
+    for (let j = 0; j < digits.length; j++) {
+      carry += digits[j] << 8;
+      digits[j] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let out = "1".repeat(zeros);
+  for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET[digits[i]];
+  return out;
+}

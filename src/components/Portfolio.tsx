@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useSolanaWallets, useConnectedStandardWallets } from "@privy-io/react-auth/solana";
 import { fetchWalletPortfolio, type WalletPortfolio } from "../lib/wallet";
 import { formatCompact, formatPrice, shortAddr } from "../lib/format";
 import WalletActions from "./WalletActions";
@@ -16,9 +16,14 @@ function amt(n: number): string {
 
 export default function Portfolio() {
   const { ready, authenticated, login } = usePrivy();
-  // The embedded Solana wallet lives here (not on user.wallet, which is EVM).
+  // All connected Solana wallets — embedded AND external (Phantom, Solflare…).
+  const { wallets: stdWallets } = useConnectedStandardWallets();
+  // Embedded-only list (for wallet creation + detecting the embedded wallet).
   const { wallets: solWallets, createWallet } = useSolanaWallets();
-  const wallet = solWallets?.[0]?.address;
+  const active = stdWallets?.[0] as any;
+  const wallet: string | undefined = active?.address ?? solWallets?.[0]?.address;
+  const embeddedAddrs = new Set((solWallets || []).map((w) => w.address));
+  const isEmbedded = wallet ? embeddedAddrs.has(wallet) : false;
 
   const [data, setData] = useState<WalletPortfolio | null>(null);
   const [loading, setLoading] = useState(false);
@@ -137,6 +142,8 @@ export default function Portfolio() {
 
             <WalletActions
               wallet={wallet}
+              swallet={active}
+              isEmbedded={isEmbedded}
               holdings={data?.holdings || []}
               onDone={() => load(wallet)}
             />

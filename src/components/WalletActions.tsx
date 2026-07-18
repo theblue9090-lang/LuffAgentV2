@@ -1,23 +1,41 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { useExportWallet, useFundWallet, useSendTransaction } from "@privy-io/react-auth/solana";
+import { useExportWallet, useFundWallet, useStandardSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import type { Asset } from "../lib/wallet";
 import {
   buildSolTransfer,
   buildSplTransfer,
-  getConnection,
+  base58,
   jupiterQuote,
   jupiterSwapTx,
+  serializeTx,
   solscanTx,
   SOL_MINT,
 } from "../lib/txn";
 import { PublicKey } from "@solana/web3.js";
-import { formatPrice, shortAddr } from "../lib/format";
 
 interface Props {
   wallet: string;
+  swallet: any; // ConnectedStandardSolanaWallet (embedded or external, e.g. Phantom)
+  isEmbedded: boolean;
   holdings: Asset[];
   onDone: () => void;
+}
+
+// Sign + send a built transaction with the active standard wallet (works for
+// both Privy embedded wallets and external wallets like Phantom).
+async function signSend(
+  signAndSend: any,
+  swallet: any,
+  tx: any
+): Promise<string> {
+  const res = await signAndSend({
+    transaction: serializeTx(tx),
+    wallet: swallet,
+    chain: "solana:mainnet",
+  });
+  const sigBytes: Uint8Array = res?.signature ?? res;
+  return sigBytes instanceof Uint8Array ? base58(sigBytes) : String(sigBytes || "");
 }
 
 type Modal = null | "deposit" | "withdraw" | "swap";
@@ -39,14 +57,15 @@ function isValidPubkey(s: string): boolean {
   }
 }
 
-export default function WalletActions({ wallet, holdings, onDone }: Props) {
+export default function WalletActions({ wallet, swallet, isEmbedded, holdings, onDone }: Props) {
   const [modal, setModal] = useState<Modal>(null);
   const { exportWallet } = useExportWallet();
   const { fundWallet } = useFundWallet();
+  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
 
   return (
     <>
-      <div className="wallet-actions">
+      <div className="wallet-actions" style={isEmbedded ? undefined : { gridTemplateColumns: "repeat(3, 1fr)" }}>
         <button className="wa-btn" onClick={() => setModal("deposit")}>
           <span className="wa-ico">↓</span> Deposit
         </button>
@@ -56,22 +75,38 @@ export default function WalletActions({ wallet, holdings, onDone }: Props) {
         <button className="wa-btn" onClick={() => setModal("swap")}>
           <span className="wa-ico">⇄</span> Swap
         </button>
-        <button
-          className="wa-btn wa-btn-ghost"
-          onClick={() => exportWallet({ address: wallet }).catch(() => {})}
-        >
-          <span className="wa-ico">🔑</span> Export key
-        </button>
+        {isEmbedded && (
+          <button
+            className="wa-btn wa-btn-ghost"
+            onClick={() => exportWallet({ address: wallet }).catch(() => {})}
+          >
+            <span className="wa-ico">🔑</span> Export key
+          </button>
+        )}
       </div>
 
       {modal === "deposit" && (
         <DepositModal wallet={wallet} onFund={() => fundWallet(wallet).catch(() => {})} onClose={() => setModal(null)} />
       )}
       {modal === "withdraw" && (
-        <WithdrawModal wallet={wallet} holdings={holdings} onClose={() => setModal(null)} onDone={onDone} />
+        <WithdrawModal
+          wallet={wallet}
+          swallet={swallet}
+          signAndSend={signAndSendTransaction}
+          holdings={holdings}
+          onClose={() => setModal(null)}
+          onDone={onDone}
+        />
       )}
       {modal === "swap" && (
-        <SwapModal wallet={wallet} holdings={holdings} onClose={() => setModal(null)} onDone={onDone} />
+        <SwapModal
+          wallet={wallet}
+          swallet={swallet}
+          signAndSend={signAndSendTransaction}
+          holdings={holdings}
+          onClose={() => setModal(null)}
+          onDone={onDone}
+        />
       )}
     </>
   );
@@ -122,16 +157,19 @@ function DepositModal({ wallet, onFund, onClose }: { wallet: string; onFund: () 
 /* ---------------- WITHDRAW ---------------- */
 function WithdrawModal({
   wallet,
+  swallet,
+  signAndSend,
   holdings,
   onClose,
   onDone,
 }: {
   wallet: string;
+  swallet: any;
+  signAndSend: any;
   holdings: Asset[];
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { sendTransaction } = useSendTransaction();
   const assets = holdings.length ? holdings : [];
   const [mint, setMint] = useState(assets[0]?.mint || SOL_MINT);
   const [amount, setAmount] = useState("");
@@ -154,9 +192,8 @@ function WithdrawModal({
         asset.mint === SOL_MINT
           ? await buildSolTransfer(wallet, to.trim(), amt)
           : await buildSplTransfer(wallet, to.trim(), asset.mint, amt, asset.decimals);
-      const receipt = await sendTransaction({ transaction: tx as any, connection: getConnection(), address: wallet });
-      const sig = (receipt as any)?.signature || (receipt as any);
-      setStatus({ ok: true, msg: "Withdrawal sent", sig: typeof sig === "string" ? sig : undefined });
+      const sig = await signSend(signAndSend, swallet, tx);
+      setStatus({ ok: true, msg: "Withdrawal sent", sig: sig || undefined });
       onDone();
     } catch (e: any) {
       setStatus({ ok: false, msg: e?.message ? String(e.message).slice(0, 140) : "Transaction failed or cancelled" });
@@ -226,16 +263,19 @@ function WithdrawModal({
 /* ---------------- SWAP ---------------- */
 function SwapModal({
   wallet,
+  swallet,
+  signAndSend,
   holdings,
   onClose,
   onDone,
 }: {
   wallet: string;
+  swallet: any;
+  signAndSend: any;
   holdings: Asset[];
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { sendTransaction } = useSendTransaction();
   const inAssets = holdings.length ? holdings : [];
   const [inMint, setInMint] = useState(inAssets[0]?.mint || SOL_MINT);
   const [outSym, setOutSym] = useState("USDC");
@@ -281,9 +321,8 @@ function SwapModal({
       if (!quote) throw new Error("No route found for this swap");
       const tx = await jupiterSwapTx(quote, wallet);
       if (!tx) throw new Error("Failed to build swap transaction");
-      const receipt = await sendTransaction({ transaction: tx as any, connection: getConnection(), address: wallet });
-      const sig = (receipt as any)?.signature || (receipt as any);
-      setStatus({ ok: true, msg: "Swap submitted", sig: typeof sig === "string" ? sig : undefined });
+      const sig = await signSend(signAndSend, swallet, tx);
+      setStatus({ ok: true, msg: "Swap submitted", sig: sig || undefined });
       onDone();
     } catch (e: any) {
       setStatus({ ok: false, msg: e?.message ? String(e.message).slice(0, 140) : "Swap failed or cancelled" });
