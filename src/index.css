@@ -113,15 +113,37 @@ a {
   border-radius: 20px;
 }
 
-/* Animated One Piece ocean background (canvas) replaces the static backdrop */
-.ocean-bg {
+/* One Piece sunset artwork background with scroll parallax + gentle drift */
+.ocean-scene {
   position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
   z-index: -1;
   pointer-events: none;
+  overflow: hidden;
+  background: #150a1e;
+}
+.ocean-parallax {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+.ocean-photo {
+  position: absolute;
   display: block;
+  user-select: none;
+}
+.ocean-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(9, 4, 16, 0.6) 0%,
+      rgba(9, 4, 16, 0.12) 16%,
+      rgba(9, 4, 16, 0.06) 52%,
+      rgba(9, 4, 16, 0.28) 82%,
+      rgba(9, 4, 16, 0.6) 100%
+    );
 }
 body::before,
 body::after {
