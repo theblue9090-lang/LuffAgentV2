@@ -8,10 +8,12 @@ import ProjectDetails from "./components/ProjectDetails";
 import HowToUse from "./components/HowToUse";
 import Footer from "./components/Footer";
 import ErrorBoundary from "./components/ErrorBoundary";
+import OceanBackground from "./components/OceanBackground";
 
 export default function App() {
   return (
     <>
+      <OceanBackground />
       <Header />
       <main>
         <Hero />
