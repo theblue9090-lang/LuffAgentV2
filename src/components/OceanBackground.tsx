@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 
-// Animated One Piece-style sea + ship background. Waves drift continuously and
-// every layer (red sun, ship, wave bands) parallaxes at its own speed on scroll.
-// Rendered on a fixed full-viewport canvas behind all content. Self-contained
-// (no external images), red-themed, and respects prefers-reduced-motion.
+// Full-screen animated RED sea. Layered waves fill the whole viewport top to
+// bottom and all drift continuously; a big One Piece-style pirate ship (with a
+// straw-hat Jolly Roger) sails on the left. Everything parallaxes on scroll.
+// Fixed canvas behind all content, self-contained, respects reduced-motion.
 export default function OceanBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -16,25 +16,13 @@ export default function OceanBackground() {
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     let W = 0;
     let H = 0;
-    let dpr = 1;
 
     const scroll = { y: window.scrollY || 0 };
     const onScroll = () => (scroll.y = window.scrollY || 0);
     window.addEventListener("scroll", onScroll, { passive: true });
 
-    // deterministic star field
-    const stars = Array.from({ length: 90 }, (_, i) => {
-      const s = (i * 2654435761) >>> 0;
-      return {
-        x: ((s % 1000) / 1000),
-        y: (((s >> 10) % 1000) / 1000) * 0.6,
-        r: 0.4 + ((s >> 5) % 100) / 100,
-        tw: ((s >> 3) % 100) / 100,
-      };
-    });
-
     function resize() {
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       W = window.innerWidth;
       H = window.innerHeight;
       canvas!.width = Math.floor(W * dpr);
@@ -46,97 +34,175 @@ export default function OceanBackground() {
     resize();
     window.addEventListener("resize", resize);
 
-    // ---- draw one billowing wave band across the screen ----
-    function wave(yBase: number, amp: number, len: number, phase: number, color: string) {
+    // ---- a filled wave crest band ----
+    function waveBand(y: number, amp: number, len: number, phase: number, fill: string, crest: string, thickness: number) {
       ctx!.beginPath();
-      ctx!.moveTo(0, H);
-      for (let x = 0; x <= W; x += 14) {
-        const y = yBase + Math.sin(x / len + phase) * amp + Math.sin(x / (len * 0.5) + phase * 1.7) * amp * 0.35;
-        ctx!.lineTo(x, y);
+      ctx!.moveTo(-20, y + amp + thickness);
+      for (let x = -20; x <= W + 20; x += 16) {
+        const yy = y + Math.sin(x / len + phase) * amp + Math.sin(x / (len * 0.45) + phase * 1.6) * amp * 0.4;
+        ctx!.lineTo(x, yy);
       }
-      ctx!.lineTo(W, H);
+      ctx!.lineTo(W + 20, y + amp + thickness);
       ctx!.closePath();
-      ctx!.fillStyle = color;
+      ctx!.fillStyle = fill;
       ctx!.fill();
+      // bright crest line
+      ctx!.beginPath();
+      for (let x = -20; x <= W + 20; x += 16) {
+        const yy = y + Math.sin(x / len + phase) * amp + Math.sin(x / (len * 0.45) + phase * 1.6) * amp * 0.4;
+        if (x === -20) ctx!.moveTo(x, yy);
+        else ctx!.lineTo(x, yy);
+      }
+      ctx!.strokeStyle = crest;
+      ctx!.lineWidth = 1.4;
+      ctx!.stroke();
     }
 
-    // ---- draw the One Piece-style ship silhouette ----
-    function ship(x: number, y: number, scale: number, tilt: number, rim: string) {
+    // ---- big One Piece-style pirate ship ----
+    function ship(cx: number, cy: number, scale: number, tilt: number) {
       ctx!.save();
-      ctx!.translate(x, y);
+      ctx!.translate(cx, cy);
       ctx!.rotate(tilt);
       ctx!.scale(scale, scale);
 
-      const hull = "#080a12";
-      // hull
+      const dark = "#0b0507";
+      const rim = "rgba(255,120,130,0.5)";
+      const sailGrad = () => {
+        const g = ctx!.createLinearGradient(0, -170, 0, -20);
+        g.addColorStop(0, "rgba(60,20,26,0.92)");
+        g.addColorStop(1, "rgba(28,10,14,0.92)");
+        return g;
+      };
+
+      // rigging
+      ctx!.strokeStyle = "rgba(255,120,130,0.18)";
+      ctx!.lineWidth = 0.8;
       ctx!.beginPath();
-      ctx!.moveTo(-62, -4);
-      ctx!.quadraticCurveTo(-54, 16, -30, 20);
-      ctx!.lineTo(34, 20);
-      ctx!.quadraticCurveTo(56, 16, 66, -4);
-      ctx!.quadraticCurveTo(40, 4, 0, 4);
-      ctx!.quadraticCurveTo(-40, 4, -62, -4);
-      ctx!.closePath();
-      ctx!.fillStyle = hull;
-      ctx!.fill();
-      ctx!.lineWidth = 1.4;
-      ctx!.strokeStyle = rim;
+      ctx!.moveTo(-120, -6); ctx!.lineTo(0, -210);
+      ctx!.moveTo(120, -6); ctx!.lineTo(0, -210);
+      ctx!.moveTo(-60, -4); ctx!.lineTo(-60, -150);
+      ctx!.moveTo(60, -4); ctx!.lineTo(60, -150);
       ctx!.stroke();
 
-      // bowsprit
-      ctx!.beginPath();
-      ctx!.moveTo(56, -6);
-      ctx!.lineTo(84, -18);
-      ctx!.strokeStyle = hull;
-      ctx!.lineWidth = 3;
-      ctx!.stroke();
-
-      // masts + sails
-      const masts = [
-        { mx: -20, h: 82 },
-        { mx: 18, h: 96 },
-      ];
-      for (const m of masts) {
+      // three masts
+      for (const mx of [-60, 0, 60]) {
         ctx!.beginPath();
-        ctx!.moveTo(m.mx, 4);
-        ctx!.lineTo(m.mx, -m.h);
-        ctx!.strokeStyle = hull;
-        ctx!.lineWidth = 3;
-        ctx!.stroke();
-        // billowing sail
-        ctx!.beginPath();
-        ctx!.moveTo(m.mx, -m.h + 8);
-        ctx!.quadraticCurveTo(m.mx + 34, -m.h * 0.55, m.mx + 6, -14);
-        ctx!.lineTo(m.mx, -14);
-        ctx!.closePath();
-        const g = ctx!.createLinearGradient(m.mx, -m.h, m.mx + 34, -14);
-        g.addColorStop(0, "rgba(255,120,130,0.14)");
-        g.addColorStop(1, "rgba(20,10,14,0.6)");
-        ctx!.fillStyle = g;
-        ctx!.fill();
-        ctx!.strokeStyle = "rgba(255,120,130,0.28)";
-        ctx!.lineWidth = 1;
+        ctx!.moveTo(mx, 6);
+        ctx!.lineTo(mx, mx === 0 ? -212 : -156);
+        ctx!.strokeStyle = dark;
+        ctx!.lineWidth = 4;
         ctx!.stroke();
       }
+      // yardarms
+      ctx!.strokeStyle = dark;
+      ctx!.lineWidth = 3;
+      ctx!.beginPath();
+      ctx!.moveTo(-96, -120); ctx!.lineTo(-24, -120);
+      ctx!.moveTo(-46, -168); ctx!.lineTo(46, -168);
+      ctx!.moveTo(30, -120); ctx!.lineTo(96, -120);
+      ctx!.stroke();
 
-      // straw-hat flag on the tallest mast (Luffy nod)
-      const fx = 18;
-      const fy = -96;
+      // side square sails (billowing)
+      const sideSail = (x0: number, x1: number, top: number, bot: number, dir: number) => {
+        ctx!.beginPath();
+        ctx!.moveTo(x0, top);
+        ctx!.quadraticCurveTo((x0 + x1) / 2 + 16 * dir, (top + bot) / 2, x0, bot);
+        ctx!.lineTo(x1, bot);
+        ctx!.quadraticCurveTo((x0 + x1) / 2 + 34 * dir, (top + bot) / 2, x1, top);
+        ctx!.closePath();
+        ctx!.fillStyle = sailGrad();
+        ctx!.fill();
+        ctx!.strokeStyle = rim;
+        ctx!.lineWidth = 1;
+        ctx!.stroke();
+      };
+      sideSail(-92, -28, -118, -58, 1);
+      sideSail(34, 92, -118, -58, 1);
+
+      // MAIN sail (big) with the straw-hat Jolly Roger
       ctx!.beginPath();
-      ctx!.moveTo(fx, fy);
-      ctx!.lineTo(fx + 26, fy + 5);
-      ctx!.lineTo(fx, fy + 12);
+      ctx!.moveTo(-44, -166);
+      ctx!.quadraticCurveTo(6, -150, 44, -166);
+      ctx!.lineTo(44, -74);
+      ctx!.quadraticCurveTo(6, -58, -44, -74);
       ctx!.closePath();
+      ctx!.fillStyle = sailGrad();
+      ctx!.fill();
+      ctx!.strokeStyle = rim;
+      ctx!.lineWidth = 1.2;
+      ctx!.stroke();
+
+      // Jolly Roger: skull + crossbones + straw hat (Straw Hat Pirates)
+      const bone = "rgba(240,225,225,0.9)";
+      ctx!.strokeStyle = bone;
+      ctx!.lineWidth = 5;
+      ctx!.lineCap = "round";
+      ctx!.beginPath();
+      ctx!.moveTo(-26, -132); ctx!.lineTo(26, -108);
+      ctx!.moveTo(26, -132); ctx!.lineTo(-26, -108);
+      ctx!.stroke();
+      ctx!.fillStyle = bone;
+      ctx!.beginPath();
+      ctx!.arc(0, -122, 13, 0, Math.PI * 2);
+      ctx!.fill();
+      ctx!.beginPath();
+      ctx!.moveTo(-9, -112); ctx!.lineTo(9, -112); ctx!.lineTo(4, -104); ctx!.lineTo(-4, -104);
+      ctx!.closePath(); ctx!.fill();
+      // eyes
+      ctx!.fillStyle = "#1a0508";
+      ctx!.beginPath(); ctx!.arc(-5, -124, 3, 0, Math.PI * 2); ctx!.fill();
+      ctx!.beginPath(); ctx!.arc(5, -124, 3, 0, Math.PI * 2); ctx!.fill();
+      // straw hat
+      ctx!.fillStyle = "#e8b34a";
+      ctx!.beginPath(); ctx!.ellipse(0, -132, 20, 5, 0, 0, Math.PI * 2); ctx!.fill();
+      ctx!.beginPath(); ctx!.ellipse(0, -134, 10, 8, 0, Math.PI, 0); ctx!.fill();
+      ctx!.fillStyle = "#c1121f";
+      ctx!.fillRect(-10, -135, 20, 2.4);
+
+      // hull
+      ctx!.beginPath();
+      ctx!.moveTo(-150, -6);
+      ctx!.quadraticCurveTo(-150, 30, -116, 40);
+      ctx!.lineTo(118, 40);
+      ctx!.quadraticCurveTo(150, 34, 156, -12);
+      ctx!.lineTo(150, -30);
+      ctx!.lineTo(104, -26);
+      ctx!.lineTo(104, -6);
+      ctx!.quadraticCurveTo(-20, 4, -150, -6);
+      ctx!.closePath();
+      ctx!.fillStyle = dark;
+      ctx!.fill();
+      ctx!.strokeStyle = rim;
+      ctx!.lineWidth = 1.4;
+      ctx!.stroke();
+
+      // deck stripe + portholes
+      ctx!.fillStyle = "rgba(255,90,104,0.16)";
+      ctx!.fillRect(-120, -4, 224, 4);
+      ctx!.fillStyle = "rgba(255,150,90,0.5)";
+      for (let px = -104; px <= 96; px += 26) {
+        ctx!.beginPath();
+        ctx!.arc(px, 16, 3.2, 0, Math.PI * 2);
+        ctx!.fill();
+      }
+
+      // figurehead + bowsprit
+      ctx!.strokeStyle = dark;
+      ctx!.lineWidth = 4;
+      ctx!.beginPath();
+      ctx!.moveTo(-140, -8); ctx!.lineTo(-182, -26);
+      ctx!.stroke();
+
+      // pennant flags
       ctx!.fillStyle = "#e11d2a";
-      ctx!.fill();
-      // tiny hat emblem
-      ctx!.fillStyle = "#f0c04a";
-      ctx!.beginPath();
-      ctx!.ellipse(fx + 11, fy + 6, 5, 1.7, 0, 0, Math.PI * 2);
-      ctx!.fill();
-      ctx!.beginPath();
-      ctx!.ellipse(fx + 11, fy + 5, 2.4, 2, 0, Math.PI, 0);
-      ctx!.fill();
+      for (const [fx, fy] of [[0, -212], [-60, -156], [60, -156]] as const) {
+        ctx!.beginPath();
+        ctx!.moveTo(fx, fy);
+        ctx!.lineTo(fx + 30, fy + 6);
+        ctx!.lineTo(fx, fy + 12);
+        ctx!.closePath();
+        ctx!.fill();
+      }
 
       ctx!.restore();
     }
@@ -145,115 +211,94 @@ export default function OceanBackground() {
       const t = reduce ? 0 : tms / 1000;
       const s = scroll.y;
 
-      // parallax offsets
-      const horizon = H * 0.6 - s * 0.06;
+      // full-height red sea gradient
+      const g = ctx!.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "#1a0409");
+      g.addColorStop(0.28, "#4a0d16");
+      g.addColorStop(0.5, "#7a1420");
+      g.addColorStop(0.72, "#450b14");
+      g.addColorStop(1, "#120407");
+      ctx!.fillStyle = g;
+      ctx!.fillRect(0, 0, W, H);
 
-      // sky
-      const sky = ctx!.createLinearGradient(0, 0, 0, horizon + 60);
-      sky.addColorStop(0, "#070305");
-      sky.addColorStop(0.55, "#1a060c");
-      sky.addColorStop(1, "#4a0f18");
-      ctx!.fillStyle = sky;
-      ctx!.fillRect(0, 0, W, horizon + 60);
-
-      // stars
-      for (const st of stars) {
-        const alpha = 0.25 + 0.55 * Math.abs(Math.sin(t * 0.8 + st.tw * 6.28));
-        ctx!.globalAlpha = alpha * (1 - st.y / 0.6) * 0.9;
-        ctx!.fillStyle = "#ffd7dc";
-        ctx!.fillRect(st.x * W, st.y * H - s * 0.02, st.r, st.r);
-      }
-      ctx!.globalAlpha = 1;
-
-      // red sun / moon near the horizon
-      const sunX = W * 0.76;
-      const sunY = horizon - 46 - s * 0.05;
-      const sunR = Math.min(W, H) * 0.11;
-      const glow = ctx!.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR * 3.2);
-      glow.addColorStop(0, "rgba(255,90,104,0.5)");
+      // red sun glow, upper area
+      const sunX = W * 0.72;
+      const sunY = H * 0.24 - s * 0.05;
+      const glow = ctx!.createRadialGradient(sunX, sunY, 0, sunX, sunY, Math.min(W, H) * 0.5);
+      glow.addColorStop(0, "rgba(255,110,120,0.5)");
+      glow.addColorStop(0.5, "rgba(255,60,74,0.14)");
       glow.addColorStop(1, "rgba(255,45,63,0)");
       ctx!.fillStyle = glow;
-      ctx!.fillRect(0, 0, W, horizon + 80);
-      const disc = ctx!.createRadialGradient(sunX, sunY, sunR * 0.2, sunX, sunY, sunR);
-      disc.addColorStop(0, "#ff6b78");
+      ctx!.fillRect(0, 0, W, H);
+      const disc = ctx!.createRadialGradient(sunX, sunY, 6, sunX, sunY, Math.min(W, H) * 0.1);
+      disc.addColorStop(0, "#ff7b86");
       disc.addColorStop(1, "#c1121f");
       ctx!.fillStyle = disc;
       ctx!.beginPath();
-      ctx!.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+      ctx!.arc(sunX, sunY, Math.min(W, H) * 0.09, 0, Math.PI * 2);
       ctx!.fill();
 
-      // sea base
-      const sea = ctx!.createLinearGradient(0, horizon, 0, H);
-      sea.addColorStop(0, "#3a0c14");
-      sea.addColorStop(0.4, "#160309");
-      sea.addColorStop(1, "#070204");
-      ctx!.fillStyle = sea;
-      ctx!.fillRect(0, horizon, W, H - horizon);
+      // FULL-HEIGHT moving wave layers (top → bottom), all drifting
+      const N = 34;
+      const span = H * 1.25;
+      const scrollWrap = (s * 0.18) % (span / N);
+      for (let i = 0; i < N; i++) {
+        const f = i / N;
+        let y = ((i * span) / N - scrollWrap) % span;
+        if (y < -30) y += span;
+        const amp = 3 + f * 12;
+        const len = 130 + i * 6;
+        const speed = 0.25 + f * 1.25;
+        const phase = t * speed + i * 0.7;
+        const a = 0.05 + f * 0.16;
+        const fill = `rgba(${120 + Math.floor(f * 90)},${18 + Math.floor(f * 12)},${28 + Math.floor(f * 10)},${a})`;
+        const crest = `rgba(255,${130 + Math.floor(f * 60)},${140},${0.1 + f * 0.22})`;
+        waveBand(y, amp, len, phase, fill, crest, 6 + f * 10);
+      }
 
-      // shimmering reflection of the sun on the water
+      // shimmering sun reflection column
       ctx!.save();
       ctx!.globalCompositeOperation = "screen";
-      for (let i = 0; i < 22; i++) {
-        const ry = horizon + 6 + i * ((H - horizon) / 22);
-        const sway = Math.sin(t * 1.4 + i * 0.6) * (6 + i);
-        const w = sunR * (0.5 + i * 0.06);
-        ctx!.globalAlpha = 0.05 + 0.05 * Math.sin(t * 2 + i);
-        ctx!.fillStyle = "#ff5a68";
-        ctx!.fillRect(sunX - w / 2 + sway, ry, w, 2.2);
+      for (let i = 0; i < 26; i++) {
+        const ry = sunY + i * (H / 34);
+        if (ry < sunY) continue;
+        const sway = Math.sin(t * 1.5 + i * 0.55) * (5 + i * 1.3);
+        const w = Math.min(W, H) * (0.04 + i * 0.01);
+        ctx!.globalAlpha = 0.045 + 0.04 * Math.sin(t * 2 + i);
+        ctx!.fillStyle = "#ff6b78";
+        ctx!.fillRect(sunX - w / 2 + sway, ry, w, 2.4);
       }
       ctx!.restore();
       ctx!.globalAlpha = 1;
 
-      // distant ship on the horizon
-      ship(W * 0.2 + Math.sin(t * 0.15) * 20 - s * 0.03, horizon - 6, 0.42, Math.sin(t * 0.6) * 0.03, "rgba(255,120,130,0.25)");
+      // BIG One Piece ship on the left
+      const shipScale = Math.max(0.7, Math.min(1.4, H / 620));
+      const shipX = W * 0.18 + Math.sin(t * 0.22) * 20 - s * 0.08;
+      const shipY = H * 0.66 - s * 0.04 + Math.sin(t * 1.05) * 8;
+      ship(shipX, shipY, shipScale, Math.sin(t * 1.05) * 0.04);
 
-      // far wave band
-      wave(horizon + (H - horizon) * 0.18 - s * 0.03, 10, 220, t * 0.5, "#1e0710");
+      // a couple of foreground waves to seat the ship in the sea
+      waveBand(H * 0.66 - s * 0.03, 20, 170, t * 1.1, "rgba(90,14,22,0.55)", "rgba(255,140,150,0.28)", 40);
+      waveBand(H * 0.82 - s * 0.02, 28, 150, t * 1.35 + 1.5, "rgba(40,8,14,0.7)", "rgba(255,120,130,0.22)", 60);
 
-      // main ship riding a mid wave
-      const shipX = W * 0.44 + Math.sin(t * 0.25) * 26 - s * 0.09;
-      const midY = horizon + (H - horizon) * 0.42 - s * 0.05;
-      const bob = Math.sin(t * 1.1) * 6;
-      ship(shipX, midY + bob - 14, 0.9, Math.sin(t * 1.1) * 0.05, "rgba(255,120,130,0.35)");
-
-      // mid wave (in front of ship base)
-      wave(midY - s * 0.02, 16, 180, t * 0.8 + 1, "#12060b");
-
-      // near / foreground wave
-      wave(horizon + (H - horizon) * 0.72 - s * 0.02, 26, 150, t * 1.15 + 2, "#0a0407");
-
-      // faint tech grid overlay (crypto ↔ sea fusion)
-      ctx!.globalAlpha = 0.05;
-      ctx!.strokeStyle = "#ff4d5e";
-      ctx!.lineWidth = 1;
-      const grid = 46;
-      const gy = -(s * 0.1) % grid;
-      ctx!.beginPath();
-      for (let x = 0; x <= W; x += grid) {
-        ctx!.moveTo(x, 0);
-        ctx!.lineTo(x, horizon);
-      }
-      for (let y = gy; y <= horizon; y += grid) {
-        ctx!.moveTo(0, y);
-        ctx!.lineTo(W, y);
-      }
-      ctx!.stroke();
-      ctx!.globalAlpha = 1;
-
-      // vignette + top darken for text legibility
-      const vig = ctx!.createRadialGradient(W / 2, H * 0.42, H * 0.2, W / 2, H * 0.5, H * 0.85);
+      // readability: vignette + soft top/left scrim
+      const vig = ctx!.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.9);
       vig.addColorStop(0, "rgba(0,0,0,0)");
-      vig.addColorStop(1, "rgba(3,1,2,0.6)");
+      vig.addColorStop(1, "rgba(4,1,3,0.55)");
       ctx!.fillStyle = vig;
       ctx!.fillRect(0, 0, W, H);
-      const topFade = ctx!.createLinearGradient(0, 0, 0, H * 0.35);
-      topFade.addColorStop(0, "rgba(5,2,4,0.55)");
-      topFade.addColorStop(1, "rgba(5,2,4,0)");
-      ctx!.fillStyle = topFade;
-      ctx!.fillRect(0, 0, W, H * 0.35);
+      const top = ctx!.createLinearGradient(0, 0, 0, H * 0.22);
+      top.addColorStop(0, "rgba(6,2,4,0.5)");
+      top.addColorStop(1, "rgba(6,2,4,0)");
+      ctx!.fillStyle = top;
+      ctx!.fillRect(0, 0, W, H * 0.22);
     }
 
     let raf = 0;
+    const loop = (tms: number) => {
+      frame(tms);
+      if (!reduce) raf = requestAnimationFrame(loop);
+    };
     if (reduce) {
       frame(0);
       const rerender = () => frame(0);
@@ -266,13 +311,7 @@ export default function OceanBackground() {
         window.removeEventListener("resize", rerender);
       };
     }
-
-    const loop = (tms: number) => {
-      frame(tms);
-      raf = requestAnimationFrame(loop);
-    };
     raf = requestAnimationFrame(loop);
-
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("scroll", onScroll);
