@@ -145,6 +145,79 @@ a {
       rgba(9, 4, 16, 0.6) 100%
     );
 }
+
+/* Living water: a second copy of the SAME crisp image, displaced by an
+   animated turbulence filter so the sea + reflections ripple like real
+   waves. It's masked to only appear over the lower water region, so the
+   sky and the ship stay 100% sharp (pixels are warped, never blurred). */
+.ocean-ripple {
+  filter: url(#waterRipple);
+  will-change: filter;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0 58%,
+    #000 72%,
+    #000 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0 58%,
+    #000 72%,
+    #000 100%
+  );
+}
+
+/* Seagulls that fly across the sky and flap their wings. */
+.ocean-birds {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+.gull {
+  position: absolute;
+  left: 0;
+  animation-name: fly;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+  filter: drop-shadow(0 5px 7px rgba(0, 0, 0, 0.22));
+}
+.gull-flap {
+  width: 100%;
+  transform-origin: 50% 42%;
+  animation-name: flap;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+@keyframes flap {
+  0%,
+  100% {
+    transform: scaleX(var(--flip, 1)) scaleY(1);
+  }
+  50% {
+    transform: scaleX(var(--flip, 1)) scaleY(0.5);
+  }
+}
+@keyframes fly {
+  0% {
+    transform: translate3d(-16vw, 0, 0);
+  }
+  50% {
+    transform: translate3d(48vw, calc(var(--drop, 4vh) * -1), 0);
+  }
+  100% {
+    transform: translate3d(116vw, 0, 0);
+  }
+}
+.ocean-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 body::before,
 body::after {
   display: none;
