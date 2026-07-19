@@ -24,7 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         appearance: {
           theme: "dark",
           accentColor: "#ff2d3f",
-          logo: "/logo.svg",
+          logo: "/logo.webp",
           walletChainType: "solana-only",
           showWalletLoginFirst: false,
         },

@@ -299,7 +299,10 @@ a {
 .brand img {
   width: 42px;
   height: 42px;
-  filter: drop-shadow(0 0 10px rgba(255, 45, 63, 0.55));
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid rgba(255, 77, 94, 0.5);
+  box-shadow: 0 0 12px rgba(255, 45, 63, 0.5);
 }
 .brand-text {
   display: flex;

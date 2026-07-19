@@ -7,7 +7,7 @@ interface Props {
 export default function Logo({ size = 42, showText = true, onClick }: Props) {
   return (
     <div className="brand" onClick={onClick} role={onClick ? "button" : undefined}>
-      <img src="/logo.svg" alt="LUFF AGENT logo" width={size} height={size} />
+      <img src="/logo.webp" alt="LUFF AGENT logo" width={size} height={size} />
       {showText && (
         <div className="brand-text">
           <div className="brand-name">
