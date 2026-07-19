@@ -100,6 +100,8 @@ export default function Sniper() {
   const [chartCoin, setChartCoin] = useState<Coin | null>(null);
   const [target, setTarget] = useState<string>("");
   const [streamOpen, setStreamOpen] = useState(false);
+  const [solBalance, setSolBalance] = useState<number | null>(null);
+  const [topupWarn, setTopupWarn] = useState(false);
 
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
@@ -309,24 +311,29 @@ export default function Sniper() {
     pinMints(positions.map((p) => p.id));
   }, [positions]);
 
-  // ---- track live SOL balance while armed (no spend cap: run until funds out) ----
+  // ---- track SOL balance whenever a wallet is connected ----
+  // Used both to gate START (need enough SOL) and to keep sniping until
+  // funds run out (no spend cap).
   useEffect(() => {
-    if (!armed || !walletAddr) {
+    if (!walletAddr) {
       balanceRef.current = Infinity;
+      setSolBalance(null);
       return;
     }
     let stop = false;
     const poll = async () => {
       const b = await fetchSolBalance(walletAddr);
-      if (!stop) balanceRef.current = b;
+      if (stop) return;
+      balanceRef.current = b;
+      setSolBalance(b);
     };
     poll();
-    const id = setInterval(poll, 8000);
+    const id = setInterval(poll, armed ? 8000 : 15000);
     return () => {
       stop = true;
       clearInterval(id);
     };
-  }, [armed, walletAddr]);
+  }, [walletAddr, armed]);
 
   // ---- snipe a coin picked from New Launches ----
   function handleSnipeNew(coin: Coin) {
@@ -344,10 +351,34 @@ export default function Sniper() {
     }, 60);
   }
 
-  function toggleArm() {
+  const requiredSol = cfg.amountSol + FEE_BUFFER_SOL;
+  const insufficient = solBalance != null && solBalance < requiredSol;
+
+  // Clear the top-up warning once the wallet has enough SOL again.
+  useEffect(() => {
+    if (!insufficient) setTopupWarn(false);
+  }, [insufficient]);
+
+  async function toggleArm() {
     if (!authenticated || !walletAddr) return login();
+    if (armed) {
+      setArmed(false);
+      return;
+    }
     if (cfg.mode === "dev-wallet" && cfg.devAddresses.length === 0) return;
-    setArmed((a) => !a);
+    // Gate on SOL balance — never start the sniper without enough funds.
+    let bal = solBalance;
+    if (bal == null) {
+      bal = await fetchSolBalance(walletAddr);
+      setSolBalance(bal);
+      balanceRef.current = bal;
+    }
+    if (bal < requiredSol) {
+      setTopupWarn(true);
+      return;
+    }
+    setTopupWarn(false);
+    setArmed(true);
   }
 
   const canArmDev = cfg.mode !== "dev-wallet" || cfg.devAddresses.length > 0;
@@ -486,28 +517,47 @@ export default function Sniper() {
             <div className="warn-banner" style={{ marginTop: 6, marginBottom: 0 }}>
               <span>🔴</span>
               <span>
-                <b>Mainnet · real funds · no spend cap.</b> While armed the sniper buys matching tokens
-                with real SOL until your balance runs out or you disarm. The <b>embedded wallet</b>
+                <b>Mainnet · real funds · no spend cap.</b> While running the sniper buys matching tokens
+                with real SOL until your balance runs out or you stop it. The <b>embedded wallet</b>
                 auto-approves (hands-free); external wallets like Phantom confirm each trade. New tokens
                 are extremely high risk — only use funds you can afford to lose.
               </span>
             </div>
 
+            {hasWallet && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, fontFamily: "var(--font-mono)", fontSize: "0.82rem" }}>
+                <span style={{ color: "var(--text-mute)" }}>Wallet balance</span>
+                <span style={{ fontWeight: 700, color: insufficient ? "var(--loss)" : "var(--green)" }}>
+                  {solBalance == null ? "…" : `${solBalance.toFixed(3)} SOL`}
+                </span>
+              </div>
+            )}
+
+            {(topupWarn || (hasWallet && insufficient)) && (
+              <div className="warn-banner" style={{ marginTop: 10, marginBottom: 0, borderColor: "rgba(255,181,71,0.4)", background: "rgba(255,181,71,0.1)", color: "#ffcf8a" }}>
+                <span>⚠️</span>
+                <span>
+                  <b>Not enough SOL to snipe.</b> You need at least <b>{requiredSol.toFixed(3)} SOL</b> (buy
+                  amount + fees). Top up your wallet with SOL — use <a href="#portfolio" style={{ color: "inherit", textDecoration: "underline" }}>Deposit</a> in the Portfolio — then start the sniper.
+                </span>
+              </div>
+            )}
+
             <button
               className={`btn btn-block arm-btn btn-danger ${armed ? "armed" : ""}`}
               onClick={toggleArm}
               disabled={authenticated && hasWallet && !canArmDev}
-              style={{ marginTop: 14 }}
+              style={{ marginTop: 14, opacity: !armed && hasWallet && insufficient ? 0.6 : undefined }}
             >
               {!authenticated
-                ? "🔒 Login to arm sniper"
+                ? "🔒 Login to start"
                 : !hasWallet
-                ? "👛 Connect a wallet to arm"
+                ? "👛 Connect a wallet to start"
                 : armed
-                ? "■ Disarm sniper"
+                ? "■ STOP SNIPE"
                 : !canArmDev
                 ? "Add a dev wallet first"
-                : "🔴 Arm sniper (mainnet)"}
+                : "🔴 START SNIPE"}
             </button>
           </div>
 
