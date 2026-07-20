@@ -13,7 +13,7 @@ import type { Coin } from "./market";
 import { cachedSolPrice, GRADUATION_MC_USD, normalizeUri } from "./market";
 
 const WS_URL = "wss://pumpportal.fun/api/data";
-const MAX_WATCH = 45; // cap live trade subscriptions
+const MAX_WATCH = 60; // cap live trade subscriptions
 
 export interface TradeUpdate {
   mint: string;

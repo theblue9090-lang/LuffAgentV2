@@ -23,8 +23,8 @@ const FAST_MS = 3000;
 const FULL_MS = 10000;
 const PRICE_MS = 30000;
 const MAX_RECENT = 120;
-const MAX_WATCH = 45;
-const TOP_WATCH = 14;
+const MAX_WATCH = 60; // total live trade subscriptions (bonding bar updates)
+const TOP_WATCH = 24; // newest pump coins always watched
 
 let refs = 0;
 let stream: StreamHandle | null = null;
@@ -92,11 +92,13 @@ function pushRecent(coin: Coin) {
 
 function refreshWatch() {
   if (!stream || !open) return;
-  const top = recent
-    .filter((c) => c.source === "pump.fun")
-    .slice(0, TOP_WATCH)
-    .map((c) => c.id);
-  const union = [...new Set([...pinned, ...top])].slice(0, MAX_WATCH);
+  const pumps = recent.filter((c) => c.source === "pump.fun");
+  // Keep subscribing coins that are actually trading (their bonding bars are the
+  // ones that move) alongside the newest mints, so bars don't freeze the moment
+  // a coin scrolls out of the newest slice during a launch spam burst.
+  const active = pumps.filter((c) => (c.buys || 0) + (c.sells || 0) > 0).map((c) => c.id);
+  const newest = pumps.slice(0, TOP_WATCH).map((c) => c.id);
+  const union = [...new Set([...pinned, ...active, ...newest])].slice(0, MAX_WATCH);
   stream.watchTrades(union);
 }
 
@@ -153,7 +155,9 @@ function emitStatus(o: boolean) {
 
 async function loadFast() {
   try {
-    const d = await fetchPumpLatest(30);
+    // Refresh a broad slice of the visible feed so bonding bars keep moving even
+    // for coins the WebSocket isn't actively subscribed to.
+    const d = await fetchPumpLatest(60);
     for (const c of d) emitCoin(c);
   } catch {
     /* ignore */
