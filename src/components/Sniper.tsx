@@ -120,6 +120,9 @@ export default function Sniper() {
   const doneRef = useRef<Set<string>>(new Set());
   // Coins counted in "scanned" (once each, despite momentum re-emits).
   const seenRef = useRef<Set<string>>(new Set());
+  // Coins that already showed a skip row — avoids re-spamming the feed while a
+  // pending coin is re-checked every few seconds.
+  const skipFedRef = useRef<Set<string>>(new Set());
   const scannedRef = useRef(0); // high-frequency counter, flushed to state on an interval
   const lastRealRef = useRef(0);
   const executingRef = useRef(false); // one live buy at a time (avoid nonce/blockhash races)
@@ -287,10 +290,12 @@ export default function Sniper() {
       // Mainnet only → always a real on-chain buy via the connected wallet.
       void executeLiveBuy(coin, config);
     } else {
-      // "pending" skips (waiting for momentum) stay eligible for re-check;
-      // all other skips are final.
+      // "pending" skips (waiting to cross a floor / gain momentum) stay eligible
+      // for re-check; all other skips are final.
       if (!decision.pending) doneRef.current.add(coin.id);
-      if (Math.random() > 0.6) {
+      // Only surface a skip row once per coin so re-checks don't spam the feed.
+      if (!skipFedRef.current.has(coin.id) && Math.random() > 0.6) {
+        skipFedRef.current.add(coin.id);
         pushFeed({
           key: coin.id + Date.now(),
           symbol: coin.symbol,
@@ -354,6 +359,7 @@ export default function Sniper() {
       armSkipRef.current = new Set(getRecentCoins().map((c) => c.id));
       doneRef.current = new Set();
       seenRef.current = new Set();
+      skipFedRef.current = new Set();
     }
   }, [armed]);
 

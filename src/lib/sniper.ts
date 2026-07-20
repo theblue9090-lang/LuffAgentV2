@@ -126,17 +126,19 @@ export function evaluateCoin(coin: Coin, cfg: SniperConfig): Decision {
   }
 
   if (ageSec > cfg.maxAgeSec) return { action: "skip", reason: `Too old (${ageSec}s)` };
-  // Only enforce the USD floors/caps when we actually have that data. Brand-new
-  // mints frequently report 0/unknown liquidity or market cap on their first
-  // realtime event, and a missing field must not silently skip every snipe.
+  // Liquidity / market-cap floors are TRANSIENT — a brand-new mint is born at
+  // ~$2–3K and climbs as buys arrive, so these are "pending" skips: the coin is
+  // re-checked on every live update until it crosses the floor (or ages out).
+  // Without this, a coin that later pumps past the floor would be skipped once
+  // at birth and never reconsidered, so the sniper only ever scans.
   if (coin.liquidity > 0 && coin.liquidity < cfg.minLiquidity)
-    return { action: "skip", reason: "Low liquidity" };
+    return { action: "skip", reason: "Low liquidity", pending: true };
   if (coin.marketCap > 0 && coin.marketCap < cfg.minMarketCap)
-    return { action: "skip", reason: "MC below floor" };
+    return { action: "skip", reason: "MC below floor", pending: true };
   if (coin.marketCap > 0 && coin.marketCap > cfg.maxMarketCap)
-    return { action: "skip", reason: "MC above cap" };
+    return { action: "skip", reason: "MC above cap" }; // above cap → won't come back down
   if (cfg.antiRug && coin.liquidity > 0 && coin.liquidity < Math.max(cfg.minLiquidity, 2500))
-    return { action: "skip", reason: "Anti-rug: thin liquidity" };
+    return { action: "skip", reason: "Anti-rug: thin liquidity", pending: true };
 
   // Smart targeting: only snipe coins that are actually gaining momentum. The
   // score climbs as real buys + market-cap growth arrive, so this is a
