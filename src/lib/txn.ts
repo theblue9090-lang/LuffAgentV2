@@ -159,6 +159,29 @@ export async function submitTx(signAndSend: any, swallet: any, tx: Transaction |
   return sig instanceof Uint8Array ? base58(sig) : String(sig || "");
 }
 
+// Fast path for the sniper: sign the transaction with the wallet, then
+// broadcast it ourselves with skipPreflight and WITHOUT waiting for on-chain
+// confirmation. Privy's built-in signAndSend forces a preflight simulation
+// ("confirmed") + a full confirmation wait, which is slow and throws -32002
+// when the simulation fails; skipping both makes buys land far faster.
+export async function signAndSendFast(
+  signTransaction: any,
+  swallet: any,
+  tx: Transaction | VersionedTransaction
+): Promise<string> {
+  const { signedTransaction } = await signTransaction({
+    transaction: serializeTx(tx),
+    wallet: swallet,
+    chain: "solana:mainnet",
+  });
+  const sig = await getConnection().sendRawTransaction(signedTransaction, {
+    skipPreflight: true,
+    maxRetries: 3,
+    preflightCommitment: "processed",
+  });
+  return sig;
+}
+
 // ---- PumpPortal local trade (mainnet buy/sell, non-custodial) ----
 // Returns an unsigned VersionedTransaction the user's wallet signs & sends.
 // Handles pump.fun bonding-curve tokens and migrated pools via pool:"auto".

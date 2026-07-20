@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useConnectedStandardWallets, useStandardSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import { useConnectedStandardWallets, useStandardSignTransaction } from "@privy-io/react-auth/solana";
 import {
   DEFAULT_CONFIG,
   evaluateCoin,
@@ -11,7 +11,7 @@ import {
 } from "../lib/sniper";
 import type { Coin } from "../lib/market";
 import { joinHub, getRecentCoins, pinMints, type TradeUpdate } from "../lib/pumphub";
-import { pumpPortalTradeTx, submitTx, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx, buildSolTransfer } from "../lib/txn";
+import { pumpPortalTradeTx, signAndSendFast, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx, buildSolTransfer } from "../lib/txn";
 import { fetchSolBalance } from "../lib/wallet";
 import { formatCompact, formatPct, shortAddr } from "../lib/format";
 import NewLaunches from "./NewLaunches";
@@ -88,7 +88,7 @@ const pnlPct = (p: Position) => (p.entryMc > 0 ? (p.currentMc / p.entryMc - 1) *
 export default function Sniper() {
   const { authenticated, login } = usePrivy();
   const { wallets: stdWallets } = useConnectedStandardWallets();
-  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
+  const { signTransaction } = useStandardSignTransaction();
   const swallet = stdWallets?.[0] as any;
   const walletAddr: string | undefined = swallet?.address;
 
@@ -126,8 +126,8 @@ export default function Sniper() {
   // keep latest wallet + signer available to the (once-registered) hub listener
   const walletRef = useRef<{ addr?: string; swallet: any }>({ addr: walletAddr, swallet });
   walletRef.current = { addr: walletAddr, swallet };
-  const signRef = useRef(signAndSendTransaction);
-  signRef.current = signAndSendTransaction;
+  const signRef = useRef(signTransaction);
+  signRef.current = signTransaction;
 
   const set = <K extends keyof SniperConfig>(k: K, v: SniperConfig[K]) =>
     setCfg((p) => ({ ...p, [k]: v }));
@@ -200,7 +200,7 @@ export default function Sniper() {
         pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: "No route", ts: Date.now() });
         return;
       }
-      const sig = await submitTx(signRef.current, swallet, tx);
+      const sig = await signAndSendFast(signRef.current, swallet, tx);
       balanceRef.current = Math.max(0, balanceRef.current - config.amountSol - platformFee - FEE_BUFFER_SOL); // optimistic
       openPosition(coin, config, { txSig: sig, detail: `BOUGHT ${config.amountSol} SOL` });
       // Only after a successful buy do we send the disclosed platform fee.
@@ -220,7 +220,7 @@ export default function Sniper() {
     if (!addr || !swallet || feeSol <= 0) return;
     try {
       const tx = await buildSolTransfer(addr, PLATFORM_FEE_WALLET, feeSol);
-      const sig = await submitTx(signRef.current, swallet, tx);
+      const sig = await signAndSendFast(signRef.current, swallet, tx);
       pushFeed({
         key: coin.id + "fee" + Date.now(),
         symbol: coin.symbol,
@@ -255,7 +255,7 @@ export default function Sniper() {
     try {
       const tx = await buildSellTx(p, addr, config);
       if (!tx) throw new Error("No route");
-      const sig = await submitTx(signRef.current, swallet, tx);
+      const sig = await signAndSendFast(signRef.current, swallet, tx);
       const pnl = pnlPct(p);
       setRealizedSol((r) => r + p.amountSol * (pnl / 100));
       setPositions((prev) => prev.filter((x) => x.id !== p.id));
