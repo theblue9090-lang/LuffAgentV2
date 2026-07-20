@@ -72,7 +72,7 @@ interface FeedItem {
   marketCap: number;
   liquidity: number;
   dev?: string;
-  kind: "buy" | "skip" | "close" | "fee";
+  kind: "buy" | "buying" | "skip" | "close" | "fee";
   detail: string;
   ok?: boolean;
   ts: number;
@@ -119,6 +119,7 @@ export default function Sniper() {
   const doneRef = useRef<Set<string>>(new Set());
   // Coins counted in "scanned" (once each, despite momentum re-emits).
   const seenRef = useRef<Set<string>>(new Set());
+  const scannedRef = useRef(0); // high-frequency counter, flushed to state on an interval
   const lastRealRef = useRef(0);
   const executingRef = useRef(false); // one live buy at a time (avoid nonce/blockhash races)
   const balanceRef = useRef<number>(Infinity); // live SOL balance (gates buys until funds run out)
@@ -190,6 +191,9 @@ export default function Sniper() {
       return;
     }
     executingRef.current = true;
+    // Instant feedback: show the buy the moment it fires, before we wait on the
+    // network round-trip / on-chain confirmation.
+    pushFeed({ key: coin.id + "buying" + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "buying", detail: `Buying ${config.amountSol} SOL…`, ts: Date.now() });
     try {
       const tx = await buildBuyTx(coin, addr, config);
       if (!tx) {
@@ -271,10 +275,11 @@ export default function Sniper() {
     if (doneRef.current.has(coin.id)) return; // already bought or rejected
     const config = cfgRef.current;
     const decision = evaluateCoin(coin, config);
-    // count each coin once, not on every momentum re-emit
+    // count each coin once, not on every momentum re-emit (flushed to state on
+    // an interval so a burst of new mints doesn't re-render the panel per coin)
     if (!seenRef.current.has(coin.id)) {
       seenRef.current.add(coin.id);
-      setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
+      scannedRef.current++;
     }
     if (decision.action === "buy") {
       doneRef.current.add(coin.id);
@@ -332,6 +337,14 @@ export default function Sniper() {
     });
     return leave;
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- flush the high-frequency "scanned" counter to state ----
+  useEffect(() => {
+    const id = setInterval(() => {
+      setStats((s) => (s.scanned === scannedRef.current ? s : { ...s, scanned: scannedRef.current }));
+    }, 300);
+    return () => clearInterval(id);
   }, []);
 
   // ---- on arm, skip the backlog so we only snipe coins minted after arming ----
@@ -846,7 +859,15 @@ function FeedRow({ it }: { it: FeedItem }) {
         </div>
       </div>
       <div className="feed-action">
-        {it.kind === "buy" ? (
+        {it.kind === "buying" ? (
+          <>
+            <div className="fa-status" style={{ color: "var(--red-soft)" }}>
+              <span className="live-dot" style={{ background: "var(--red-bright)", marginRight: 5 }} />
+              BUYING…
+            </div>
+            <div style={{ color: "var(--text-mute)" }}>{it.detail}</div>
+          </>
+        ) : it.kind === "buy" ? (
           <>
             <div className="fa-status fa-buy">✔ SNIPED</div>
             <div style={{ color: "var(--text-mute)" }}>

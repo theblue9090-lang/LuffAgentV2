@@ -28,22 +28,16 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
   const seen = useRef<Set<string>>(new Set(getRecentCoins().map((c) => c.id)));
   const ready = useRef(false);
   const pendingTrades = useRef<Map<string, TradeUpdate>>(new Map());
-
-  function upsertOne(coin: Coin) {
-    setCoins((prev) => {
-      const map = new Map<string, Coin>();
-      map.set(coin.id, coin);
-      for (const c of prev) if (!map.has(c.id)) map.set(c.id, c);
-      else if (c.id === coin.id) map.set(c.id, { ...c, ...coin });
-      return [...map.values()]
-        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-        .slice(0, 80);
-    });
-  }
+  const pendingCoins = useRef<Map<string, Coin>>(new Map());
+  const freshBuf = useRef<string[]>([]);
 
   function markFresh(ids: string[]) {
     if (!ids.length) return;
-    setFresh((f) => new Set(f).add(ids[0]));
+    setFresh((f) => {
+      const n = new Set(f);
+      ids.forEach((id) => n.add(id));
+      return n;
+    });
     setTimeout(() => {
       setFresh((f) => {
         const n = new Set(f);
@@ -72,14 +66,14 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
   useEffect(() => {
     const leave = joinHub({
       onStatus: setStreamOpen,
+      // Buffer incoming coins; the flush below applies them in ONE render so a
+      // burst of poll/stream/momentum events can't storm the main thread.
       onCoin: (coin) => {
-        const isNew = !seen.current.has(coin.id);
-        seen.current.add(coin.id);
-        upsertOne(coin);
-        setDataLive(true);
-        setLoading(false);
-        setUpdatedAt(Date.now());
-        if (isNew && ready.current) markFresh([coin.id]);
+        if (!seen.current.has(coin.id)) {
+          seen.current.add(coin.id);
+          if (ready.current) freshBuf.current.push(coin.id);
+        }
+        pendingCoins.current.set(coin.id, coin);
       },
       onTrade: (t) => {
         pendingTrades.current.set(t.mint, t);
@@ -89,26 +83,40 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     const readyT = setTimeout(() => (ready.current = true), 700);
     const ager = setInterval(() => forceAge((x) => x + 1), 1000);
     const flush = setInterval(() => {
-      if (!pendingTrades.current.size) return;
-      const updates = pendingTrades.current;
+      const incoming = pendingCoins.current;
+      const trades = pendingTrades.current;
+      if (!incoming.size && !trades.size) return;
+      pendingCoins.current = new Map();
       pendingTrades.current = new Map();
-      const ids = [...updates.keys()];
-      setCoins((prev) =>
-        prev.map((c) => {
-          const u = updates.get(c.id);
-          if (!u) return c;
-          return {
-            ...c,
-            marketCap: u.marketCap,
-            liquidity: u.liquidity || c.liquidity,
-            bondingProgress: u.bondingProgress,
-            isBondingCurve: u.bondingProgress < 100,
-          };
-        })
-      );
-      markPulse(ids);
+      setCoins((prev) => {
+        const map = new Map(prev.map((c) => [c.id, c]));
+        for (const [id, c] of incoming) map.set(id, map.has(id) ? { ...map.get(id)!, ...c } : c);
+        for (const [id, u] of trades) {
+          const c = map.get(id);
+          if (c)
+            map.set(id, {
+              ...c,
+              marketCap: u.marketCap,
+              liquidity: u.liquidity || c.liquidity,
+              bondingProgress: u.bondingProgress,
+              isBondingCurve: u.bondingProgress < 100,
+            });
+        }
+        return [...map.values()]
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+          .slice(0, 80);
+      });
+      if (incoming.size) {
+        setDataLive(true);
+        setLoading(false);
+      }
+      if (trades.size) markPulse([...trades.keys()]);
+      if (freshBuf.current.length) {
+        markFresh(freshBuf.current);
+        freshBuf.current = [];
+      }
       setUpdatedAt(Date.now());
-    }, 650);
+    }, 300);
 
     return () => {
       leave();

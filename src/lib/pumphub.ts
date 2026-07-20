@@ -48,13 +48,14 @@ interface Momentum {
   sellVol: number; // SOL sold
   firstSeen: number;
   lastReemit: number;
+  lastScore: number;
 }
 const momo = new Map<string, Momentum>();
 
 function initMomo(mint: string, mc: number): Momentum {
   let m = momo.get(mint);
   if (!m) {
-    m = { firstMc: mc || 0, buys: 0, sells: 0, buyVol: 0, sellVol: 0, firstSeen: Date.now(), lastReemit: 0 };
+    m = { firstMc: mc || 0, buys: 0, sells: 0, buyVol: 0, sellVol: 0, firstSeen: Date.now(), lastReemit: 0, lastScore: 0 };
     momo.set(mint, m);
   } else if (!m.firstMc && mc) {
     m.firstMc = mc;
@@ -131,11 +132,14 @@ function emitTrade(t: TradeUpdate) {
       isBondingCurve: t.bondingProgress < 100,
     });
     recent[i] = updated;
-    // Re-emit the momentum-updated coin (throttled per mint) so the tracker
-    // shows a live potential score and the sniper can react to rising momentum.
+    // Re-emit the momentum-updated coin only when its potential score actually
+    // moves (and at most every 2s per mint) — mc/liquidity/bonding updates ride
+    // the lighter onTrade channel, so this avoids a needless render storm.
     const now = Date.now();
-    if (now - m.lastReemit > 2000) {
+    const score = updated.potentialScore || 0;
+    if (now - m.lastReemit > 2000 && Math.abs(score - m.lastScore) >= 2) {
       m.lastReemit = now;
+      m.lastScore = score;
       subs.forEach((s) => s.onCoin?.(updated));
     }
   }
