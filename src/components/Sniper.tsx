@@ -388,21 +388,24 @@ export default function Sniper() {
   }, [positions]);
 
   // ---- poll live market cap for open positions (realtime PnL) ----
-  // The trade WebSocket is best-effort; this independent poll guarantees each
-  // open position's market cap — and therefore its PnL — keeps updating.
+  // Multi-source so PnL always moves: the hub's live feed data (getRecentCoins,
+  // refreshed every ~3s + on WS trades) plus a direct Dexscreener/pump.fun
+  // fetch. Whichever returns a fresh market cap wins.
   useEffect(() => {
     if (!positions.length) return;
     let stop = false;
     const poll = async () => {
       const mints = positionsRef.current.map((p) => p.id);
       if (!mints.length) return;
-      const mcs = await fetchLiveMarketCaps(mints);
-      if (stop || !mcs.size) return;
+      // fast, zero-network source: whatever the hub already has live
+      const recentMcs = new Map(getRecentCoins().map((c) => [c.id, c.marketCap]));
+      const netMcs = await fetchLiveMarketCaps(mints);
+      if (stop) return;
       setPositions((prev) => {
         let changed = false;
         const next = prev.map((p) => {
-          const mc = mcs.get(p.id);
-          if (mc && mc > 0 && mc !== p.currentMc) {
+          const mc = netMcs.get(p.id) || recentMcs.get(p.id) || 0;
+          if (mc > 0 && mc !== p.currentMc) {
             changed = true;
             return { ...p, currentMc: mc };
           }
@@ -412,7 +415,7 @@ export default function Sniper() {
       });
     };
     poll();
-    const id = setInterval(poll, 4000);
+    const id = setInterval(poll, 3000);
     return () => {
       stop = true;
       clearInterval(id);

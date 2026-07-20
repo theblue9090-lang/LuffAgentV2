@@ -261,13 +261,16 @@ export async function fetchLiveMarketCaps(mints: string[]): Promise<Map<string, 
   const uniq = [...new Set(mints.filter(Boolean))];
   if (!uniq.length) return out;
 
-  // 1) Dexscreener batch (covers graduated / DEX-listed tokens).
+  // 1) Dexscreener batch (covers graduated / DEX-listed AND many pump.fun
+  //    pairs). It often omits marketCap for bonding-curve pairs, so fall back
+  //    to fdv, then to price × 1B (pump.fun's fixed supply).
   try {
     const pairs = await fetchPairsForAddresses(uniq);
     for (const p of bestPairPerToken(pairs)) {
       const addr = p.baseToken?.address;
-      const mc = num(p.marketCap) || num(p.fdv);
-      if (addr && mc > 0) out.set(addr, mc);
+      if (!addr) continue;
+      const mc = num(p.marketCap) || num(p.fdv) || num(p.priceUsd) * 1e9;
+      if (mc > 0) out.set(addr, mc);
     }
   } catch {
     /* ignore */
