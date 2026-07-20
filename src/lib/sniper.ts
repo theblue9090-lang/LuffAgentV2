@@ -42,8 +42,11 @@ export const DEFAULT_CONFIG: SniperConfig = {
   mode: "new-launches",
   amountSol: 0.5,
   sources: { pumpfun: true, dexscreener: true },
-  minLiquidity: 2000,
-  minMarketCap: 4000,
+  // Brand-new pump.fun mints launch at only ~$2–3K market cap / liquidity, so
+  // the floors must sit below that or every fresh launch is skipped ("MC below
+  // floor"). Users can raise these in the UI to be pickier.
+  minLiquidity: 800,
+  minMarketCap: 1000,
   maxMarketCap: 300000,
   maxAgeSec: 120,
   slippage: 15,
@@ -128,7 +131,7 @@ export function evaluateCoin(coin: Coin, cfg: SniperConfig): Decision {
     return { action: "skip", reason: "MC below floor" };
   if (coin.marketCap > 0 && coin.marketCap > cfg.maxMarketCap)
     return { action: "skip", reason: "MC above cap" };
-  if (cfg.antiRug && coin.liquidity > 0 && coin.liquidity < Math.max(cfg.minLiquidity, 2500))
+  if (cfg.antiRug && coin.liquidity > 0 && coin.liquidity < cfg.minLiquidity)
     return { action: "skip", reason: "Anti-rug: thin liquidity" };
 
   return {
