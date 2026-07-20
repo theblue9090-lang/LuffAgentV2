@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useSolanaWallets, useConnectedStandardWallets } from "@privy-io/react-auth/solana";
-import { fetchWalletPortfolio, type WalletPortfolio } from "../lib/wallet";
+import { fetchWalletPortfolio, type WalletPortfolio, type Asset } from "../lib/wallet";
 import { formatCompact, formatPrice, shortAddr } from "../lib/format";
+import { SOL_MINT } from "../lib/txn";
 import WalletActions from "./WalletActions";
+import SellModal from "./SellModal";
 
 // Format a token balance compactly.
 function amt(n: number): string {
@@ -29,6 +31,7 @@ export default function Portfolio() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [sellAsset, setSellAsset] = useState<Asset | null>(null);
 
   const load = useCallback(async (address: string) => {
     setLoading(true);
@@ -148,6 +151,18 @@ export default function Portfolio() {
               onDone={() => load(wallet)}
             />
 
+            {sellAsset && (
+              <SellModal
+                asset={sellAsset}
+                wallet={wallet}
+                swallet={active}
+                onClose={() => setSellAsset(null)}
+                onDone={() => {
+                  load(wallet);
+                }}
+              />
+            )}
+
             <div className="card" style={{ marginTop: 18, padding: 6, overflowX: "auto" }}>
               {error && (!data || data.holdings.length === 0) ? (
                 <EmptyRow
@@ -165,12 +180,12 @@ export default function Portfolio() {
               ) : data.holdings.length === 0 ? (
                 <EmptyRow icon="👛" title="No assets found" sub="This wallet holds no SOL or SPL tokens yet." />
               ) : (
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
                   <thead>
                     <tr style={{ textAlign: "left" }}>
-                      {["Asset", "Balance", "Price", "Value"].map((h) => (
+                      {["Asset", "Balance", "Price", "Value", ""].map((h, i) => (
                         <th
-                          key={h}
+                          key={h || i}
                           style={{
                             padding: "14px 16px",
                             fontFamily: "var(--font-mono)",
@@ -217,6 +232,13 @@ export default function Portfolio() {
                         </td>
                         <td className="mono" style={{ padding: "12px 16px", textAlign: "right", fontWeight: 600 }}>
                           {h.valueUsd > 0 ? formatCompact(h.valueUsd) : "—"}
+                        </td>
+                        <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                          {h.mint !== SOL_MINT && (
+                            <button className="btn btn-danger btn-sm" onClick={() => setSellAsset(h)}>
+                              Sell
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

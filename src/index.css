@@ -1381,6 +1381,11 @@ body::after {
   margin-top: 7px;
   font-family: var(--font-mono);
 }
+.sell-pct-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 .fee-note {
   display: flex;
   gap: 7px;
