@@ -252,6 +252,39 @@ async function fetchPairsForAddresses(addresses: string[]): Promise<any[]> {
   return results.flatMap((r) => r?.pairs || []);
 }
 
+// Live market cap for a set of mints — used to keep open-position PnL moving
+// even when the trade WebSocket is quiet or churned that coin out. Tries
+// Dexscreener (graduated / Raydium pairs) first, then pump.fun for coins still
+// on the bonding curve.
+export async function fetchLiveMarketCaps(mints: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const uniq = [...new Set(mints.filter(Boolean))];
+  if (!uniq.length) return out;
+
+  // 1) Dexscreener batch (covers graduated / DEX-listed tokens).
+  try {
+    const pairs = await fetchPairsForAddresses(uniq);
+    for (const p of bestPairPerToken(pairs)) {
+      const addr = p.baseToken?.address;
+      const mc = num(p.marketCap) || num(p.fdv);
+      if (addr && mc > 0) out.set(addr, mc);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // 2) pump.fun fallback for anything still on the bonding curve.
+  const missing = uniq.filter((m) => !out.has(m));
+  await Promise.all(
+    missing.map(async (mint) => {
+      const c = await getJson<any>(`https://frontend-api-v3.pump.fun/coins/${mint}`);
+      const mc = num(c?.usd_market_cap) || num(c?.market_cap);
+      if (mc > 0) out.set(mint, mc);
+    })
+  );
+  return out;
+}
+
 export interface TokenMeta {
   priceUsd: number;
   symbol: string;

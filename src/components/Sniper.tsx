@@ -12,6 +12,7 @@ import {
 import type { Coin } from "../lib/market";
 import { joinHub, getRecentCoins, pinMints, type TradeUpdate } from "../lib/pumphub";
 import { pumpPortalTradeTx, signAndSendFast, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx, buildSolTransfer } from "../lib/txn";
+import { fetchLiveMarketCaps } from "../lib/market";
 import { fetchSolBalance } from "../lib/wallet";
 import { formatCompact, formatPct, shortAddr } from "../lib/format";
 import NewLaunches from "./NewLaunches";
@@ -379,6 +380,38 @@ export default function Sniper() {
   useEffect(() => {
     pinMints(positions.map((p) => p.id));
   }, [positions]);
+
+  // ---- poll live market cap for open positions (realtime PnL) ----
+  // The trade WebSocket is best-effort; this independent poll guarantees each
+  // open position's market cap — and therefore its PnL — keeps updating.
+  useEffect(() => {
+    if (!positions.length) return;
+    let stop = false;
+    const poll = async () => {
+      const mints = positionsRef.current.map((p) => p.id);
+      if (!mints.length) return;
+      const mcs = await fetchLiveMarketCaps(mints);
+      if (stop || !mcs.size) return;
+      setPositions((prev) => {
+        let changed = false;
+        const next = prev.map((p) => {
+          const mc = mcs.get(p.id);
+          if (mc && mc > 0 && mc !== p.currentMc) {
+            changed = true;
+            return { ...p, currentMc: mc };
+          }
+          return p;
+        });
+        return changed ? next : prev;
+      });
+    };
+    poll();
+    const id = setInterval(poll, 4000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [positions.length]);
 
   // ---- track SOL balance whenever a wallet is connected ----
   // Used both to gate START (need enough SOL) and to keep sniping until
