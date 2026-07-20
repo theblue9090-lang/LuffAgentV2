@@ -79,7 +79,7 @@ interface FeedItem {
 
 const AMOUNT_PRESETS = [0.1, 0.5, 1, 2, 5];
 const MAX_POSITIONS = 200; // safety ceiling only; the real limit is your SOL balance
-const FEE_BUFFER_SOL = 0.012; // keep a little SOL for fees/priority
+const FEE_BUFFER_SOL = 0.006; // small reserve for network + priority fees (keeps the entry bar low)
 
 const pnlPct = (p: Position) => (p.entryMc > 0 ? (p.currentMc / p.entryMc - 1) * 100 : 0);
 

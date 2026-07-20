@@ -40,7 +40,7 @@ export const DEFAULT_CONFIG: SniperConfig = {
   maxMarketCap: 300000,
   maxAgeSec: 120,
   slippage: 15,
-  priorityFee: 0.001,
+  priorityFee: 0.0003,
   takeProfit: 120,
   stopLoss: 35,
   antiRug: true,
