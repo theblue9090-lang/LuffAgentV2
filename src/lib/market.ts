@@ -256,7 +256,11 @@ function pumpRestToCoin(c: any): Coin {
     priceUsd: mc && c.total_supply ? mc / (num(c.total_supply) / 1e6) : 0,
     change24h: 0,
     volume24h: 0,
-    liquidity: num(c.virtual_sol_reserves) / 1e9 || 0,
+    // virtual_sol_reserves is in lamports → convert to a USD liquidity estimate
+    // (SOL amount × SOL price). Previously this stored the raw SOL amount (~30),
+    // which was far below the USD minLiquidity floor, so the sniper skipped
+    // every REST-sourced pump.fun mint as "Low liquidity".
+    liquidity: (num(c.virtual_sol_reserves) / 1e9) * cachedSolPrice() || 0,
     marketCap: mc,
     imageUrl: normalizeUri(c.image_uri),
     source: "pump.fun",

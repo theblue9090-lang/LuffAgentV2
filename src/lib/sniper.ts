@@ -119,10 +119,16 @@ export function evaluateCoin(coin: Coin, cfg: SniperConfig): Decision {
   }
 
   if (ageSec > cfg.maxAgeSec) return { action: "skip", reason: `Too old (${ageSec}s)` };
-  if (coin.liquidity < cfg.minLiquidity) return { action: "skip", reason: "Low liquidity" };
-  if (coin.marketCap < cfg.minMarketCap) return { action: "skip", reason: "MC below floor" };
-  if (coin.marketCap > cfg.maxMarketCap) return { action: "skip", reason: "MC above cap" };
-  if (cfg.antiRug && coin.liquidity < Math.max(cfg.minLiquidity, 2500))
+  // Only enforce the USD floors/caps when we actually have that data. Brand-new
+  // mints frequently report 0/unknown liquidity or market cap on their first
+  // realtime event, and a missing field must not silently skip every snipe.
+  if (coin.liquidity > 0 && coin.liquidity < cfg.minLiquidity)
+    return { action: "skip", reason: "Low liquidity" };
+  if (coin.marketCap > 0 && coin.marketCap < cfg.minMarketCap)
+    return { action: "skip", reason: "MC below floor" };
+  if (coin.marketCap > 0 && coin.marketCap > cfg.maxMarketCap)
+    return { action: "skip", reason: "MC above cap" };
+  if (cfg.antiRug && coin.liquidity > 0 && coin.liquidity < Math.max(cfg.minLiquidity, 2500))
     return { action: "skip", reason: "Anti-rug: thin liquidity" };
 
   return {
