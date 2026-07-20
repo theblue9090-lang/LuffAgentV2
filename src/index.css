@@ -1272,6 +1272,55 @@ body::after {
   border-color: transparent;
 }
 
+/* custom buy-amount chip (input) */
+.chip-custom {
+  flex: 1.4;
+  min-width: 108px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  cursor: text;
+}
+.chip-custom-input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 9px 0;
+}
+.chip-custom-input::placeholder {
+  color: var(--text-mute);
+  font-weight: 500;
+}
+.chip-custom-input::-webkit-outer-spin-button,
+.chip-custom-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.chip-custom-input {
+  -moz-appearance: textfield;
+}
+.chip-custom-unit {
+  font-size: 0.7rem;
+  color: var(--text-mute);
+  letter-spacing: 0.04em;
+}
+.chip-custom.active .chip-custom-unit {
+  color: rgba(255, 255, 255, 0.75);
+}
+.field-error {
+  color: var(--loss);
+  font-size: 0.74rem;
+  margin-top: 7px;
+  font-family: var(--font-mono);
+}
+
 .toggle-row {
   display: flex;
   align-items: center;

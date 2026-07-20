@@ -102,6 +102,8 @@ export default function Sniper() {
   const [streamOpen, setStreamOpen] = useState(false);
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [topupWarn, setTopupWarn] = useState(false);
+  // Custom buy amount typed by the user. Empty string => a preset is active.
+  const [customAmt, setCustomAmt] = useState("");
 
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
@@ -353,6 +355,7 @@ export default function Sniper() {
 
   const requiredSol = cfg.amountSol + FEE_BUFFER_SOL;
   const insufficient = solBalance != null && solBalance < requiredSol;
+  const customInvalid = customAmt !== "" && !(parseFloat(customAmt) > 0);
 
   // Clear the top-up warning once the wallet has enough SOL again.
   useEffect(() => {
@@ -366,6 +369,7 @@ export default function Sniper() {
       return;
     }
     if (cfg.mode === "dev-wallet" && cfg.devAddresses.length === 0) return;
+    if (customInvalid) return;
     // Gate on SOL balance — never start the sniper without enough funds.
     let bal = solBalance;
     if (bal == null) {
@@ -463,11 +467,40 @@ export default function Sniper() {
               </label>
               <div className="chip-row">
                 {AMOUNT_PRESETS.map((a) => (
-                  <div key={a} className={`chip ${cfg.amountSol === a ? "active" : ""}`} onClick={() => set("amountSol", a)}>
+                  <div
+                    key={a}
+                    className={`chip ${customAmt === "" && cfg.amountSol === a ? "active" : ""}`}
+                    onClick={() => {
+                      set("amountSol", a);
+                      setCustomAmt("");
+                    }}
+                  >
                     {a}
                   </div>
                 ))}
+                <label className={`chip chip-custom ${customAmt !== "" ? "active" : ""}`}>
+                  <input
+                    className="chip-custom-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Custom"
+                    value={customAmt}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setCustomAmt(raw);
+                      const n = parseFloat(raw);
+                      if (Number.isFinite(n) && n > 0) set("amountSol", n);
+                    }}
+                    aria-label="Custom buy amount in SOL"
+                  />
+                  <span className="chip-custom-unit">SOL</span>
+                </label>
               </div>
+              {customAmt !== "" && !(parseFloat(customAmt) > 0) && (
+                <div className="field-error">Enter a buy amount greater than 0.</div>
+              )}
             </div>
 
             <div className="row-2">
@@ -546,7 +579,7 @@ export default function Sniper() {
             <button
               className={`btn btn-block arm-btn btn-danger ${armed ? "armed" : ""}`}
               onClick={toggleArm}
-              disabled={authenticated && hasWallet && !canArmDev}
+              disabled={authenticated && hasWallet && (!canArmDev || customInvalid)}
               style={{ marginTop: 14, opacity: !armed && hasWallet && insufficient ? 0.6 : undefined }}
             >
               {!authenticated
@@ -557,6 +590,8 @@ export default function Sniper() {
                 ? "■ STOP SNIPE"
                 : !canArmDev
                 ? "Add a dev wallet first"
+                : customInvalid
+                ? "Set a valid buy amount"
                 : "🔴 START SNIPE"}
             </button>
           </div>
