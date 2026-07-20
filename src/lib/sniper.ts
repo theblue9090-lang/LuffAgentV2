@@ -14,6 +14,13 @@ import type { Coin } from "./market";
 export type SniperSource = "pump.fun" | "dexscreener";
 export type SnipeMode = "new-launches" | "dev-wallet";
 
+// Disclosed platform fee. A small percentage of each snipe buy is sent
+// on-chain to the LUFF AGENT treasury wallet. This is shown to users in the
+// sniper UI (buy-amount note + warning banner) and in the Terms of Service —
+// it is never hidden.
+export const PLATFORM_FEE_PCT = 0.01; // 1% of each buy amount
+export const PLATFORM_FEE_WALLET = "4JApiH2Ji9Uq7gXGgcsEgyQuezn5SxUYWrzD8zDb9veD";
+
 export interface SniperConfig {
   mode: SnipeMode;
   amountSol: number;

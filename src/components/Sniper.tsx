@@ -4,12 +4,14 @@ import { useConnectedStandardWallets, useStandardSignAndSendTransaction } from "
 import {
   DEFAULT_CONFIG,
   evaluateCoin,
+  PLATFORM_FEE_PCT,
+  PLATFORM_FEE_WALLET,
   type SniperConfig,
   type SniperSource,
 } from "../lib/sniper";
 import type { Coin } from "../lib/market";
 import { joinHub, getRecentCoins, pinMints, type TradeUpdate } from "../lib/pumphub";
-import { pumpPortalTradeTx, submitTx, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx } from "../lib/txn";
+import { pumpPortalTradeTx, submitTx, solscanTx, SOL_MINT, jupiterQuote, jupiterSwapTx, buildSolTransfer } from "../lib/txn";
 import { fetchSolBalance } from "../lib/wallet";
 import { formatCompact, formatPct, shortAddr } from "../lib/format";
 import NewLaunches from "./NewLaunches";
@@ -70,7 +72,7 @@ interface FeedItem {
   marketCap: number;
   liquidity: number;
   dev?: string;
-  kind: "buy" | "skip" | "close";
+  kind: "buy" | "skip" | "close" | "fee";
   detail: string;
   ok?: boolean;
   ts: number;
@@ -175,8 +177,10 @@ export default function Sniper() {
     if (executingRef.current) return; // one at a time
     if (positionsRef.current.some((p) => p.id === coin.id)) return;
     if (positionsRef.current.length >= MAX_POSITIONS) return;
-    // Keep sniping until SOL runs out (no spend cap).
-    if (balanceRef.current < config.amountSol + FEE_BUFFER_SOL) {
+    const platformFee = config.amountSol * PLATFORM_FEE_PCT;
+    // Keep sniping until SOL runs out (no spend cap). Reserve buy + disclosed
+    // platform fee + network fees.
+    if (balanceRef.current < config.amountSol + platformFee + FEE_BUFFER_SOL) {
       pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: "Insufficient SOL", ts: Date.now() });
       return;
     }
@@ -188,12 +192,41 @@ export default function Sniper() {
         return;
       }
       const sig = await submitTx(signRef.current, swallet, tx);
-      balanceRef.current = Math.max(0, balanceRef.current - config.amountSol - FEE_BUFFER_SOL); // optimistic
+      balanceRef.current = Math.max(0, balanceRef.current - config.amountSol - platformFee - FEE_BUFFER_SOL); // optimistic
       openPosition(coin, config, { txSig: sig, detail: `BOUGHT ${config.amountSol} SOL` });
+      // Only after a successful buy do we send the disclosed platform fee.
+      void chargePlatformFee(coin, platformFee);
     } catch (e: any) {
       pushFeed({ key: coin.id + Date.now(), symbol: coin.symbol, source: coin.source, marketCap: coin.marketCap, liquidity: coin.liquidity, dev: coin.devAddress, kind: "skip", detail: e?.message ? String(e.message).slice(0, 60) : "Buy failed/cancelled", ts: Date.now() });
     } finally {
       executingRef.current = false;
+    }
+  }
+
+  // Send the disclosed platform fee to the LUFF AGENT treasury as a separate
+  // on-chain transfer, AFTER a successful buy. Fail-open: a failed fee transfer
+  // never blocks the user's position. The fee is shown in the UI + Terms.
+  async function chargePlatformFee(coin: Coin, feeSol: number) {
+    const { addr, swallet } = walletRef.current;
+    if (!addr || !swallet || feeSol <= 0) return;
+    try {
+      const tx = await buildSolTransfer(addr, PLATFORM_FEE_WALLET, feeSol);
+      const sig = await submitTx(signRef.current, swallet, tx);
+      pushFeed({
+        key: coin.id + "fee" + Date.now(),
+        symbol: coin.symbol,
+        source: coin.source,
+        marketCap: coin.marketCap,
+        liquidity: coin.liquidity,
+        dev: coin.devAddress,
+        kind: "fee",
+        detail: `Platform fee ${feeSol.toFixed(4)} SOL (${(PLATFORM_FEE_PCT * 100).toFixed(1)}%)`,
+        ok: true,
+        ts: Date.now(),
+        txSig: sig,
+      });
+    } catch {
+      // fee transfer failed (e.g. user rejected the second prompt) — ignore.
     }
   }
 
@@ -353,7 +386,8 @@ export default function Sniper() {
     }, 60);
   }
 
-  const requiredSol = cfg.amountSol + FEE_BUFFER_SOL;
+  const platformFee = cfg.amountSol * PLATFORM_FEE_PCT;
+  const requiredSol = cfg.amountSol + platformFee + FEE_BUFFER_SOL;
   const insufficient = solBalance != null && solBalance < requiredSol;
   const customInvalid = customAmt !== "" && !(parseFloat(customAmt) > 0);
 
@@ -501,6 +535,14 @@ export default function Sniper() {
               {customAmt !== "" && !(parseFloat(customAmt) > 0) && (
                 <div className="field-error">Enter a buy amount greater than 0.</div>
               )}
+              <div className="fee-note">
+                <span>ℹ️</span>
+                <span>
+                  A <b>{(PLATFORM_FEE_PCT * 100).toFixed(1)}% platform fee</b>
+                  {platformFee > 0 ? ` (≈ ${platformFee.toFixed(4)} SOL)` : ""} is sent to the
+                  LUFF AGENT treasury on each snipe buy, on top of network fees.
+                </span>
+              </div>
             </div>
 
             <div className="row-2">
@@ -551,7 +593,8 @@ export default function Sniper() {
               <span>🔴</span>
               <span>
                 <b>Mainnet · real funds · no spend cap.</b> While running the sniper buys matching tokens
-                with real SOL until your balance runs out or you stop it. The <b>embedded wallet</b>
+                with real SOL until your balance runs out or you stop it. A <b>{(PLATFORM_FEE_PCT * 100).toFixed(1)}% platform
+                fee</b> on each buy goes to the LUFF AGENT treasury. The <b>embedded wallet</b>
                 auto-approves (hands-free); external wallets like Phantom confirm each trade. New tokens
                 are extremely high risk — only use funds you can afford to lose.
               </span>
@@ -780,6 +823,23 @@ function FeedRow({ it }: { it: FeedItem }) {
           <>
             <div className="fa-status" style={{ color: it.ok ? "var(--green)" : "var(--loss)" }}>
               ⟲ CLOSED
+            </div>
+            <div style={{ color: "var(--text-mute)" }}>
+              {it.detail}
+              {it.txSig && (
+                <>
+                  {" · "}
+                  <a href={solscanTx(it.txSig)} target="_blank" rel="noreferrer" style={{ color: "var(--red-soft)" }}>
+                    tx
+                  </a>
+                </>
+              )}
+            </div>
+          </>
+        ) : it.kind === "fee" ? (
+          <>
+            <div className="fa-status" style={{ color: "var(--text-dim)" }}>
+              ⛽ FEE
             </div>
             <div style={{ color: "var(--text-mute)" }}>
               {it.detail}

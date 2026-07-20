@@ -149,7 +149,18 @@ function TermsModal({ onClose }: { onClose: () => void }) {
             approval; the default paper/simulation mode places no real orders.
           </p>
 
-          <h4>6. No warranty</h4>
+          <h4>6. Platform fee</h4>
+          <p>
+            LUFF AGENT charges a platform fee of <b>1% of the buy amount</b> on each snipe
+            purchase the sniper executes. The fee is sent on-chain as a separate transfer from
+            your connected wallet to the LUFF AGENT treasury wallet
+            (<span className="mono">4JApiH2Ji9Uq7gXGgcsEgyQuezn5SxUYWrzD8zDb9veD</span>) immediately
+            after each successful buy, in addition to Solana network and priority fees. The fee is
+            shown in the sniper before you arm it, in the warning banner, and in the realtime
+            tracker for every trade. No platform fee is charged on trades that do not execute.
+          </p>
+
+          <h4>7. No warranty</h4>
           <p>
             The Platform is provided "as is" and "as available" without warranties of any
             kind, express or implied, including merchantability, fitness for a particular
@@ -158,7 +169,7 @@ function TermsModal({ onClose }: { onClose: () => void }) {
             or change at any time.
           </p>
 
-          <h4>7. Limitation of liability</h4>
+          <h4>8. Limitation of liability</h4>
           <p>
             To the maximum extent permitted by law, LUFF AGENT and its contributors shall not
             be liable for any direct, indirect, incidental, consequential, or exemplary
@@ -166,7 +177,7 @@ function TermsModal({ onClose }: { onClose: () => void }) {
             inability to use, the Platform, even if advised of the possibility of such damages.
           </p>
 
-          <h4>8. Third-party services</h4>
+          <h4>9. Third-party services</h4>
           <p>
             The Platform integrates third-party services including Privy.io (authentication),
             pump.fun and Dexscreener (market data), and Solana RPC providers. Your use of
@@ -174,21 +185,21 @@ function TermsModal({ onClose }: { onClose: () => void }) {
             responsible for their availability, content or conduct.
           </p>
 
-          <h4>9. Prohibited use</h4>
+          <h4>10. Prohibited use</h4>
           <p>
             You may not use the Platform for money laundering, market manipulation, fraud, or
             any activity that is illegal in your jurisdiction, nor attempt to attack, reverse
             engineer maliciously, or disrupt the Platform or its users.
           </p>
 
-          <h4>10. Changes to these terms</h4>
+          <h4>11. Changes to these terms</h4>
           <p>
             We may update these Terms &amp; Service at any time. Continued use of the Platform
             after changes constitutes acceptance of the revised terms. Material changes will be
             reflected by the "Last updated" date above.
           </p>
 
-          <h4>11. Contact</h4>
+          <h4>12. Contact</h4>
           <p>
             Questions? Reach the LUFF AGENT community on{" "}
             <a href={X_URL} target="_blank" rel="noreferrer" style={{ color: "var(--red-soft)" }}>
