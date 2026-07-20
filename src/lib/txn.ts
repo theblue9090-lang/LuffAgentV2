@@ -159,11 +159,22 @@ export async function submitTx(signAndSend: any, swallet: any, tx: Transaction |
   return sig instanceof Uint8Array ? base58(sig) : String(sig || "");
 }
 
+function bytesToB64(bytes: Uint8Array): string {
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+  }
+  return btoa(bin);
+}
+
 // Fast path for the sniper: sign the transaction with the wallet, then
-// broadcast it ourselves with skipPreflight and WITHOUT waiting for on-chain
-// confirmation. Privy's built-in signAndSend forces a preflight simulation
-// ("confirmed") + a full confirmation wait, which is slow and throws -32002
-// when the simulation fails; skipping both makes buys land far faster.
+// broadcast it via a direct JSON-RPC sendTransaction with skipPreflight and
+// WITHOUT waiting for confirmation. Privy's built-in signAndSend forces a
+// preflight simulation + full confirmation (slow, throws -32002 on sim
+// failure), and web3.js's sendRawTransaction chokes on some RPCs' response
+// shape ("union of type | type"). A raw JSON-RPC call avoids both and lands
+// buys far faster.
 export async function signAndSendFast(
   signTransaction: any,
   swallet: any,
@@ -174,12 +185,23 @@ export async function signAndSendFast(
     wallet: swallet,
     chain: "solana:mainnet",
   });
-  const sig = await getConnection().sendRawTransaction(signedTransaction, {
-    skipPreflight: true,
-    maxRetries: 3,
-    preflightCommitment: "processed",
+  const res = await fetch(RPC, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "sendTransaction",
+      params: [
+        bytesToB64(signedTransaction),
+        { skipPreflight: true, maxRetries: 3, encoding: "base64", preflightCommitment: "processed" },
+      ],
+    }),
   });
-  return sig;
+  const j = await res.json().catch(() => null);
+  if (j?.error) throw new Error(String(j.error.message || j.error).slice(0, 90));
+  if (!j?.result) throw new Error("RPC did not return a signature");
+  return j.result as string;
 }
 
 // ---- PumpPortal local trade (mainnet buy/sell, non-custodial) ----
