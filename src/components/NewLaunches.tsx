@@ -17,6 +17,7 @@ interface Props {
 export default function NewLaunches({ onSnipe, onOpen }: Props) {
   const [coins, setCoins] = useState<Coin[]>(() => getRecentCoins());
   const [src, setSrc] = useState<Src>("all");
+  const [sort, setSort] = useState<"new" | "hot">("new");
   const [loading, setLoading] = useState(() => getRecentCoins().length === 0);
   const [streamOpen, setStreamOpen] = useState(false);
   const [dataLive, setDataLive] = useState(false);
@@ -117,7 +118,13 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
     };
   }, []);
 
-  const filtered = coins.filter((c) => (src === "all" ? true : c.source === src));
+  const filtered = coins
+    .filter((c) => (src === "all" ? true : c.source === src))
+    .sort((a, b) =>
+      sort === "hot"
+        ? (b.potentialScore || 0) - (a.potentialScore || 0)
+        : (b.createdAt || 0) - (a.createdAt || 0)
+    );
   const counts = {
     all: coins.length,
     "pump.fun": coins.filter((c) => c.source === "pump.fun").length,
@@ -149,6 +156,13 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
               <span style={{ opacity: 0.7 }}> · {counts[s]}</span>
             </button>
           ))}
+          <span className="nl-sort-sep" />
+          <button className={`nl-filter ${sort === "new" ? "active" : ""}`} onClick={() => setSort("new")}>
+            Newest
+          </button>
+          <button className={`nl-filter ${sort === "hot" ? "active" : ""}`} onClick={() => setSort("hot")}>
+            🔥 Hot
+          </button>
         </div>
       </div>
 
@@ -191,6 +205,10 @@ export default function NewLaunches({ onSnipe, onOpen }: Props) {
   );
 }
 
+function potClass(score: number): string {
+  return score >= 66 ? "pot-high" : score >= 33 ? "pot-mid" : "pot-low";
+}
+
 function NLCard({
   coin,
   fresh,
@@ -231,6 +249,19 @@ function NLCard({
         </div>
         {coin.createdAt ? <span className="nl-age">{timeAgo(coin.createdAt)}</span> : null}
       </div>
+
+      {typeof coin.potentialScore === "number" && (
+        <div className="nl-potential" title="Live profit-potential score (buy pressure, growth, volume)">
+          <span className="nl-pot-label">🔥 Potential</span>
+          <div className="nl-pot-bar">
+            <span
+              className={potClass(coin.potentialScore)}
+              style={{ width: `${Math.max(3, coin.potentialScore)}%` }}
+            />
+          </div>
+          <span className={`nl-pot-score ${potClass(coin.potentialScore)}`}>{coin.potentialScore}</span>
+        </div>
+      )}
 
       {showProg && (
         <div className="nl-bonding" title="Live bonding-curve progress toward graduation">

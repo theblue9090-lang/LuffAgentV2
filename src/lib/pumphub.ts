@@ -8,7 +8,7 @@
 // ============================================================
 
 import type { Coin } from "./market";
-import { fetchPumpLatest, fetchNewLaunches, fetchSolPrice } from "./market";
+import { fetchPumpLatest, fetchNewLaunches, fetchSolPrice, scorePotential } from "./market";
 import { subscribeNewTokens, type StreamHandle, type TradeUpdate } from "./pumpstream";
 
 export type { TradeUpdate };
@@ -37,12 +37,56 @@ const subs = new Set<HubSub>();
 const recent: Coin[] = [];
 let pinned: string[] = []; // sniper open-position mints to keep watching
 
+// ---- live momentum tracking ----------------------------------
+// Per-mint aggregation of the realtime trade stream, used to compute each
+// coin's live "profit potential" score.
+interface Momentum {
+  firstMc: number;
+  buys: number;
+  sells: number;
+  buyVol: number; // SOL bought
+  sellVol: number; // SOL sold
+  firstSeen: number;
+  lastReemit: number;
+}
+const momo = new Map<string, Momentum>();
+
+function initMomo(mint: string, mc: number): Momentum {
+  let m = momo.get(mint);
+  if (!m) {
+    m = { firstMc: mc || 0, buys: 0, sells: 0, buyVol: 0, sellVol: 0, firstSeen: Date.now(), lastReemit: 0 };
+    momo.set(mint, m);
+  } else if (!m.firstMc && mc) {
+    m.firstMc = mc;
+  }
+  return m;
+}
+
+// Attach live momentum + a fresh potential score to a coin (immutably).
+function withMomentum(coin: Coin): Coin {
+  const m = momo.get(coin.id);
+  if (!m) return { ...coin, potentialScore: scorePotential(coin) };
+  const mcGrowthPct = m.firstMc > 0 && coin.marketCap ? (coin.marketCap / m.firstMc - 1) * 100 : 0;
+  const enriched: Coin = {
+    ...coin,
+    buys: m.buys,
+    sells: m.sells,
+    netVolSol: m.buyVol - m.sellVol,
+    mcGrowthPct,
+  };
+  enriched.potentialScore = scorePotential(enriched);
+  return enriched;
+}
+
 function pushRecent(coin: Coin) {
   const i = recent.findIndex((c) => c.id === coin.id);
   if (i >= 0) recent[i] = { ...recent[i], ...coin };
   else recent.unshift(coin);
   recent.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  if (recent.length > MAX_RECENT) recent.length = MAX_RECENT;
+  if (recent.length > MAX_RECENT) {
+    const removed = recent.splice(MAX_RECENT);
+    for (const r of removed) if (!pinned.includes(r.id)) momo.delete(r.id); // prune stale momentum
+  }
 }
 
 function refreshWatch() {
@@ -57,23 +101,44 @@ function refreshWatch() {
 
 function emitCoin(coin: Coin) {
   if (!coin?.id) return;
-  pushRecent(coin);
-  subs.forEach((s) => s.onCoin?.(coin));
+  initMomo(coin.id, coin.marketCap);
+  const enriched = withMomentum(coin);
+  pushRecent(enriched);
+  subs.forEach((s) => s.onCoin?.(enriched));
   refreshWatch();
 }
 
 function emitTrade(t: TradeUpdate) {
+  // accumulate live buy/sell momentum for this mint
+  const m = initMomo(t.mint, t.marketCap);
+  if (t.txType === "buy") {
+    m.buys++;
+    m.buyVol += t.solAmount || 0;
+  } else {
+    m.sells++;
+    m.sellVol += t.solAmount || 0;
+  }
+
+  subs.forEach((s) => s.onTrade?.(t));
+
   const i = recent.findIndex((c) => c.id === t.mint);
   if (i >= 0) {
-    recent[i] = {
+    const updated = withMomentum({
       ...recent[i],
       marketCap: t.marketCap,
       liquidity: t.liquidity || recent[i].liquidity,
       bondingProgress: t.bondingProgress,
       isBondingCurve: t.bondingProgress < 100,
-    };
+    });
+    recent[i] = updated;
+    // Re-emit the momentum-updated coin (throttled per mint) so the tracker
+    // shows a live potential score and the sniper can react to rising momentum.
+    const now = Date.now();
+    if (now - m.lastReemit > 2000) {
+      m.lastReemit = now;
+      subs.forEach((s) => s.onCoin?.(updated));
+    }
   }
-  subs.forEach((s) => s.onTrade?.(t));
 }
 
 function emitStatus(o: boolean) {
@@ -137,6 +202,10 @@ export function joinHub(sub: HubSub): () => void {
 
 export function getRecentCoins(): Coin[] {
   return [...recent];
+}
+// Recent coins ranked by live profit-potential score (hottest first).
+export function getHotCoins(): Coin[] {
+  return [...recent].sort((a, b) => (b.potentialScore || 0) - (a.potentialScore || 0));
 }
 export function isHubOpen(): boolean {
   return open;

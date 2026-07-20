@@ -1068,6 +1068,67 @@ body::after {
   align-items: center;
   gap: 4px;
 }
+
+/* live profit-potential score */
+.nl-potential {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.nl-pot-label {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  color: var(--text-mute);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.nl-pot-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.nl-pot-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nl-pot-score {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  min-width: 18px;
+  text-align: right;
+}
+.pot-low {
+  background: linear-gradient(90deg, #7a6cff, #9a7dff);
+  color: #b9aaff;
+}
+.pot-mid {
+  background: linear-gradient(90deg, #ffb547, #ff7a3d);
+  color: #ffc178;
+}
+.pot-high {
+  background: linear-gradient(90deg, #ff2d3f, #ff5c4d, #22e39a);
+  color: #48e6a6;
+}
+.nl-pot-score.pot-low,
+.nl-pot-score.pot-mid,
+.nl-pot-score.pot-high {
+  background: none;
+  -webkit-background-clip: initial;
+}
+.nl-sort-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0 2px;
+}
 .nl-live-dot {
   width: 5px;
   height: 5px;

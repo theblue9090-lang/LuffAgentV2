@@ -113,7 +113,12 @@ export default function Sniper() {
   armedRef.current = armed;
   const positionsRef = useRef<Position[]>(positions);
   positionsRef.current = positions;
-  const evaluatedRef = useRef<Set<string>>(new Set());
+  // Coins present when the sniper was armed — never sniped (backlog).
+  const armSkipRef = useRef<Set<string>>(new Set());
+  // Coins already bought or permanently rejected — never reconsidered.
+  const doneRef = useRef<Set<string>>(new Set());
+  // Coins counted in "scanned" (once each, despite momentum re-emits).
+  const seenRef = useRef<Set<string>>(new Set());
   const lastRealRef = useRef(0);
   const executingRef = useRef(false); // one live buy at a time (avoid nonce/blockhash races)
   const balanceRef = useRef<number>(Infinity); // live SOL balance (gates buys until funds run out)
@@ -258,28 +263,40 @@ export default function Sniper() {
   }
 
   // ---- process one candidate coin against the rules ----
+  // Called on every hub emit, including throttled momentum re-emits — so a
+  // coin that isn't hot yet gets re-checked as its potential score climbs.
   function processCoin(coin: Coin) {
     if (!armedRef.current) return;
-    if (evaluatedRef.current.has(coin.id)) return;
-    evaluatedRef.current.add(coin.id);
+    if (armSkipRef.current.has(coin.id)) return; // backlog present at arm time
+    if (doneRef.current.has(coin.id)) return; // already bought or rejected
     const config = cfgRef.current;
     const decision = evaluateCoin(coin, config);
-    setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
+    // count each coin once, not on every momentum re-emit
+    if (!seenRef.current.has(coin.id)) {
+      seenRef.current.add(coin.id);
+      setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
+    }
     if (decision.action === "buy") {
+      doneRef.current.add(coin.id);
       // Mainnet only → always a real on-chain buy via the connected wallet.
       void executeLiveBuy(coin, config);
-    } else if (Math.random() > 0.6) {
-      pushFeed({
-        key: coin.id + Date.now(),
-        symbol: coin.symbol,
-        source: coin.source,
-        marketCap: coin.marketCap,
-        liquidity: coin.liquidity,
-        dev: coin.devAddress,
-        kind: "skip",
-        detail: decision.reason,
-        ts: Date.now(),
-      });
+    } else {
+      // "pending" skips (waiting for momentum) stay eligible for re-check;
+      // all other skips are final.
+      if (!decision.pending) doneRef.current.add(coin.id);
+      if (Math.random() > 0.6) {
+        pushFeed({
+          key: coin.id + Date.now(),
+          symbol: coin.symbol,
+          source: coin.source,
+          marketCap: coin.marketCap,
+          liquidity: coin.liquidity,
+          dev: coin.devAddress,
+          kind: "skip",
+          detail: decision.reason,
+          ts: Date.now(),
+        });
+      }
     }
   }
 
@@ -319,7 +336,11 @@ export default function Sniper() {
 
   // ---- on arm, skip the backlog so we only snipe coins minted after arming ----
   useEffect(() => {
-    if (armed) evaluatedRef.current = new Set(getRecentCoins().map((c) => c.id));
+    if (armed) {
+      armSkipRef.current = new Set(getRecentCoins().map((c) => c.id));
+      doneRef.current = new Set();
+      seenRef.current = new Set();
+    }
   }, [armed]);
 
   // ---- auto take-profit / stop-loss ----
@@ -588,6 +609,27 @@ export default function Sniper() {
 
             <Toggle label="Anti-rug shield" desc="Skip thin-liquidity / risky mints" on={cfg.antiRug} onChange={(v) => set("antiRug", v)} />
             <Toggle label="Auto take-profit / stop-loss" desc="Exit positions automatically" on={cfg.autoSell} onChange={(v) => set("autoSell", v)} />
+            <Toggle
+              label="Smart momentum targeting"
+              desc="Only snipe coins showing live buy pressure & market-cap growth"
+              on={cfg.smartTarget}
+              onChange={(v) => set("smartTarget", v)}
+            />
+            {cfg.smartTarget && (
+              <div className="field">
+                <label>
+                  Min potential score <span className="hint">0–100 · higher = pickier</span>
+                </label>
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={cfg.minPotential}
+                  onChange={(e) => set("minPotential", Math.max(0, Math.min(100, +e.target.value)))}
+                />
+              </div>
+            )}
 
             <div className="warn-banner" style={{ marginTop: 6, marginBottom: 0 }}>
               <span>🔴</span>

@@ -35,6 +35,39 @@ export interface Coin {
   twitter?: string;
   telegram?: string;
   website?: string;
+  // ---- live momentum (computed by the hub from the trade stream) ----
+  buys?: number; // buy trades seen since detection
+  sells?: number; // sell trades seen since detection
+  netVolSol?: number; // net SOL inflow (buys − sells) since detection
+  mcGrowthPct?: number; // % market-cap growth since first seen
+  potentialScore?: number; // 0–100 blended "profit potential"
+}
+
+// ---- Profit-potential score --------------------------------------
+// A 0–100 blend of the signals that tend to precede a runner: real buy
+// pressure, market-cap growth since detection, net SOL inflow, recent price
+// action, volume, and a tradeable (pre-graduation) liquidity band. Brand-new
+// coins start low and climb as genuine momentum appears.
+export function scorePotential(c: Coin): number {
+  const buys = c.buys || 0;
+  const sells = c.sells || 0;
+  const tx = buys + sells;
+  const buyRatio = tx > 0 ? buys / tx : 0.5;
+  const growth = c.mcGrowthPct || 0;
+  const ch = c.change5m ?? c.change1h ?? 0;
+  const vol = c.volume24h || 0;
+  const liq = c.liquidity || 0;
+  const net = c.netVolSol || 0;
+
+  let s = 0;
+  s += Math.max(0, Math.min(28, (buyRatio - 0.5) * 120)); // buy pressure
+  s += Math.min(18, tx * 1.2); // trade activity
+  s += Math.max(0, Math.min(26, growth * 1.2)); // market-cap growth since seen
+  s += Math.max(-8, Math.min(10, net * 4)); // net SOL inflow
+  s += Math.max(0, Math.min(10, ch)); // recent price change
+  s += Math.min(8, vol / 3000); // volume
+  if (liq >= 1500 && liq <= 60000) s += 6; // tradeable, pre-graduation sweet spot
+  return Math.round(Math.max(0, Math.min(100, s)));
 }
 
 const DS = "https://api.dexscreener.com";
@@ -306,17 +339,21 @@ export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
     }
   }
 
-  // 2) Dexscreener newest token profiles (all Solana) + latest boosts.
-  const [profiles, boosts] = await Promise.all([
+  // 2) Dexscreener newest token profiles + latest AND top boosts (all Solana).
+  //    Boosted tokens are ones people are paying to promote — a strong early
+  //    "attention" signal that often precedes a move.
+  const [profiles, latestBoosts, topBoosts] = await Promise.all([
     getJson<any[]>(`${DS}/token-profiles/latest/v1`),
     getJson<any[]>(`${DS}/token-boosts/latest/v1`),
+    getJson<any[]>(`${DS}/token-boosts/top/v1`),
   ]);
   const solAddrs = [
     ...(profiles || []).filter((p) => p.chainId === "solana").map((p) => p.tokenAddress),
-    ...(boosts || []).filter((b) => b.chainId === "solana").map((b) => b.tokenAddress),
+    ...(latestBoosts || []).filter((b) => b.chainId === "solana").map((b) => b.tokenAddress),
+    ...(topBoosts || []).filter((b) => b.chainId === "solana").map((b) => b.tokenAddress),
   ];
   if (solAddrs.length) {
-    const pairs = await fetchPairsForAddresses(solAddrs);
+    const pairs = await fetchPairsForAddresses([...new Set(solAddrs)]);
     for (const p of bestPairPerToken(pairs)) {
       const coin = pairToCoin(p, p.dexId?.includes("pump") ? "pump.fun" : "dexscreener");
       // don't overwrite a richer pump.fun record with a dex duplicate
@@ -326,6 +363,7 @@ export async function fetchNewLaunches(limit = 60): Promise<Coin[]> {
 
   const out = [...byId.values()];
   if (!out.length) return SAMPLE_NEW;
+  for (const c of out) c.potentialScore = scorePotential(c);
   out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   return out.slice(0, limit);
 }

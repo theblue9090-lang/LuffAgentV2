@@ -35,6 +35,8 @@ export interface SniperConfig {
   stopLoss: number; // %
   antiRug: boolean;
   autoSell: boolean;
+  smartTarget: boolean; // only snipe coins showing live momentum
+  minPotential: number; // 0–100 potential score required when smartTarget is on
   devAddresses: string[]; // for dev-wallet mode
 }
 
@@ -55,6 +57,8 @@ export const DEFAULT_CONFIG: SniperConfig = {
   stopLoss: 35,
   antiRug: true,
   autoSell: true,
+  smartTarget: false, // off by default → snipes every qualifying new mint
+  minPotential: 35,
   devAddresses: [],
 };
 
@@ -76,7 +80,7 @@ export interface Candidate {
 
 export type Decision =
   | { action: "buy"; reason: string }
-  | { action: "skip"; reason: string };
+  | { action: "skip"; reason: string; pending?: boolean };
 
 // ---- Evaluation against user rules ----------------------------
 export function evaluate(c: Candidate, cfg: SniperConfig): Decision {
@@ -131,8 +135,19 @@ export function evaluateCoin(coin: Coin, cfg: SniperConfig): Decision {
     return { action: "skip", reason: "MC below floor" };
   if (coin.marketCap > 0 && coin.marketCap > cfg.maxMarketCap)
     return { action: "skip", reason: "MC above cap" };
-  if (cfg.antiRug && coin.liquidity > 0 && coin.liquidity < cfg.minLiquidity)
+  if (cfg.antiRug && coin.liquidity > 0 && coin.liquidity < Math.max(cfg.minLiquidity, 2500))
     return { action: "skip", reason: "Anti-rug: thin liquidity" };
+
+  // Smart targeting: only snipe coins that are actually gaining momentum. The
+  // score climbs as real buys + market-cap growth arrive, so this is a
+  // "pending" skip — the coin is re-checked on each momentum update until it
+  // qualifies (or ages out).
+  if (cfg.smartTarget && (coin.potentialScore ?? 0) < cfg.minPotential)
+    return {
+      action: "skip",
+      reason: `Building momentum (${coin.potentialScore ?? 0}/${cfg.minPotential})`,
+      pending: true,
+    };
 
   return {
     action: "buy",
